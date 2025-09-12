@@ -1,0 +1,7 @@
+Django==5.2.6
+numpy==2.3.3
+opencv_python==4.10.0.84
+opencv_python_headless==4.10.0.84
+Pillow==11.3.0
+torch==2.4.0+cu121
+transformers==4.51.3
