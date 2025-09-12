@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="en" data-theme="auto">
+<head>
+  <meta charset="utf-8" />
+  <title>FastVLM — Live Stream + Caption History</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --bg:#0b0b0b; --text:#eaeaea; --muted:#b7b7b7; --card:#161616; --card-2:#0f0f0f; --border:#2a2a2a; --chip:#232323; --accent:#60a5fa; --accent-2:#4ade80; --shadow:0 10px 30px rgba(0,0,0,0.35); --input-bg:#101010; --btn-bg:#eaeaea; --btn-text:#111; --stream-bg:#000; }
+    html[data-theme="light"] { --bg:#f7f7fb; --text:#0b0b0b; --muted:#5b6470; --card:#ffffff; --card-2:#fafafe; --border:#e8e9ee; --chip:#f1f3f9; --accent:#2563eb; --accent-2:#16a34a; --shadow:0 10px 26px rgba(40,60,120,.09); --input-bg:#ffffff; --btn-bg:#111827; --btn-text:#ffffff; --stream-bg:#0d1117; }
+    @media (prefers-color-scheme: light) { html[data-theme="auto"] { --bg:#f7f7fb; --text:#0b0b0b; --muted:#5b6470; --card:#ffffff; --card-2:#fafafe; --border:#e8e9ee; --chip:#f1f3f9; --accent:#2563eb; --accent-2:#16a34a; --shadow:0 10px 26px rgba(40,60,120,.09); --input-bg:#ffffff; --btn-bg:#111827; --btn-text:#ffffff; --stream-bg:#0d1117; } }
+    html, body { margin:0; padding:0; background:var(--bg); color:var(--text); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"; }
+    .container { max-width: 1680px; margin: 24px auto 56px; padding: 0 18px; }
+    .appbar { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 18px; margin:0 0 18px; background:var(--card); border:1px solid var(--border); border-radius:16px; box-shadow: var(--shadow); }
+    .brand { display:flex; align-items:center; gap:12px; }
+    .logo { display:grid; place-items:center; width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, var(--accent), var(--accent-2)); color:white; font-weight:700; }
+    .title { margin:0; font-size:18px; line-height:1.15; }
+    .subtitle { margin:2px 0 0; font-size:12px; color:var(--muted); }
+    .actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    .btn, button { padding:10px 14px; border:none; border-radius:10px; cursor:pointer; font-weight:600; transition: transform .04s ease, opacity .15s ease; }
+    .btn:hover { opacity:.95 } .btn:active { transform: translateY(1px) }
+    .btn-primary { background:var(--btn-bg); color:var(--btn-text); }
+    .btn-ghost { background:transparent; color:var(--text); border:1px solid var(--border); }
+    .btn-accent { background:var(--accent); color:#fff; }
+    .btn-success { background:var(--accent-2); color:#0b0b0b; }
+    .panel { display:grid; gap:16px; grid-template-columns: 2fr 1fr; align-items:start; }
+    @media (max-width: 1100px){ .panel{ grid-template-columns: 1fr; } }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:16px; padding:14px; box-shadow: var(--shadow); }
+    .card-header { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:4px 2px 10px; }
+    .card-title { display:flex; align-items:center; gap:10px; font-weight:700; }
+    .chip { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; background:var(--chip); border:1px solid var(--border); border-radius:999px; font-size:12px; color:var(--text); }
+    .controls { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    input[type="text"], input[type="number"], select { padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:var(--input-bg); color:var(--text); outline:none; }
+    input[type="text"] { width:min(520px, 100%); }
+    .hint { color:var(--muted); font-size:12px; margin-top:8px; }
+    .spacer { height:12px; }
+    .hidden { display:none; }
+    .stream-wrap { background:var(--stream-bg); border-radius:14px; border:1px solid var(--border); padding:6px; }
+    img.stream { width:100%; height: 78vh; object-fit: contain; background:var(--stream-bg); border-radius:8px; display:block; }
+    .chat { height:78vh; overflow:auto; padding:10px; background:var(--card-2); border:1px solid var(--border); border-radius:14px; }
+    .msg { background:var(--chip); border:1px solid var(--border); padding:10px 12px; border-radius:12px; margin:8px 0; line-height:1.35; }
+    .meta { font-size:11px; color:var(--muted); margin-bottom:6px; }
+    .chooser { display:grid; place-items:center; margin:22px 0 24px; }
+    .choice-card { background:var(--card); border:1px solid var(--border); border-radius:16px; padding:24px; max-width:760px; width:100%; box-shadow: var(--shadow); }
+    .choice-title { font-size:20px; margin:0 0 8px; }
+    .choice-buttons { display:flex; gap:12px; flex-wrap:wrap; }
+    .fisheye-box, .webcam-box { margin-top:10px; background:var(--card-2); border:1px solid var(--border); border-radius:12px; }
+    .fisheye-box summary, .webcam-box summary { cursor:pointer; padding:10px 12px; font-weight:700; }
+    .fisheye-content, .webcam-content { padding:8px 12px 12px; display:grid; gap:8px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+    .fisheye-btn, .webcam-btn { text-align:left; }
+    .icon { width:18px; height:18px; display:inline-block; vertical-align:-3px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header class="appbar">
+      <div class="brand">
+        <div class="logo">VL</div>
+        <div>
+          <h1 class="title">FastVLM — Live Stream + Caption History</h1>
+          <div class="subtitle">Choose model • Set prompt/speed • Stream camera or video • See caption history</div>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="theme-toggle" class="btn btn-ghost" title="Toggle theme (Light/Dark/Auto)" aria-pressed="false">
+          <span id="theme-icon" class="icon" aria-hidden="true"></span> <span id="theme-label">Theme</span>
+        </button>
+      </div>
+    </header>
+
+    <div id="chooser" class="chooser">
+      <div class="choice-card">
+        <div class="choice-title">Choose a source to start</div>
+        <div class="choice-buttons">
+          <button class="btn btn-success" onclick="choose('camera')">Use Camera</button>
+          <button class="btn btn-accent" onclick="choose('video')">Use Server Video</button>
+        </div>
+        <div class="hint" style="margin-top:10px;">You can switch between Camera and Video at any time.</div>
+      </div>
+    </div>
+
+    <!-- CAMERA -->
+    <section id="camera-section" class="hidden">
+      <div class="panel">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><span class="chip">Camera stream</span></div>
+            <div class="controls">
+              <button type="button" class="btn btn-primary" onclick="restartCam()">Restart</button>
+              <button type="button" class="btn btn-ghost" onclick="stopStream('cam-stream')">Stop</button>
+              <button type="button" class="btn btn-ghost" onclick="choose('video')">Switch to Video</button>
+            </div>
+          </div>
+
+          <div class="controls" style="margin-bottom:8px;">
+            <label class="chip" for="cam-model">Model</label>
+            <select id="cam-model" title="Model (camera)">
+              <option value="fastvlm" selected>FastVLM (0.5B)</option>
+              <option value="qwen">Qwen2.5-VL (3B)</option>
+            </select>
+
+            <label class="chip" for="cam-preset">Prompt</label>
+            <select id="cam-preset" title="Prompt preset (camera)">
+              <!-- Generic prompts -->
+              <option value="balanced">Balanced scene + key objects</option>
+              <option value="json">Structured JSON (counts + locations)</option>
+              <option value="nav">Navigation (free space + hazards)</option>
+              <option value="ppe">Human & PPE check</option>
+              <option value="inv">Equipment inventory</option>
+              <!-- Webcam-specific -->
+              <option value="webcam_quick">Webcam quick caption</option>
+              <option value="webcam_nav">Webcam navigation</option>
+              <option value="webcam_json">Webcam JSON (parseable)</option>
+              <option value="webcam_ppe">Webcam people & PPE</option>
+              <option value="webcam_inv">Webcam inventory</option>
+              <option value="webcam_security">Webcam security/surveillance</option>
+              <!-- Fisheye/360 -->
+              <option value="fisheye_nav">Fisheye navigation (360)</option>
+              <option value="fisheye_two">Fisheye dewarped (two panoramas)</option>
+              <option value="fisheye_json">Fisheye JSON (parseable)</option>
+              <option value="fisheye_ppe">Fisheye people & PPE</option>
+              <option value="fisheye_inv">Fisheye equipment inventory</option>
+            </select>
+            <button type="button" class="btn btn-ghost" onclick="loadPresetCam()">Use prompt</button>
+
+            <label class="chip" for="cam-speed">Speed</label>
+            <select id="cam-speed" title="Speed preset (camera)">
+              <option value="balanced">Balanced</option>
+              <option value="fast">Fast</option>
+              <option value="quality">Quality</option>
+            </select>
+            <!-- Now auto restarts -->
+            <button type="button" class="btn btn-ghost" onclick="applySpeedCam(true)">Use speed</button>
+          </div>
+
+          <div class="controls">
+            <input id="cam-prompt" type="text" placeholder="Prompt (camera)" />
+            <input id="cam-analyze" type="number" min="1" max="600" value="30" title="analyze_every" />
+            <input id="cam-everyn" type="number" min="1" max="10" value="2" title="every_n" />
+            <input id="cam-maxwidth" type="number" min="320" max="3840" value="1920" title="max_width" />
+            <input id="cam-maxtok"   type="number" min="8" max="256"  value="96"   title="max_new_tokens" />
+          </div>
+
+          <!-- Webcam quick prompts -->
+          <details class="webcam-box">
+            <summary>Webcam quick prompts</summary>
+            <div class="webcam-content">
+              <button class="btn btn-ghost webcam-btn" onclick="setCamPrompt('webcam_quick')">Quick caption</button>
+              <button class="btn btn-ghost webcam-btn" onclick="setCamPrompt('webcam_nav')">Navigation</button>
+              <button class="btn btn-ghost webcam-btn" onclick="setCamPrompt('webcam_json')">STRICT JSON</button>
+              <button class="btn btn-ghost webcam-btn" onclick="setCamPrompt('webcam_ppe')">People & PPE</button>
+              <button class="btn btn-ghost webcam-btn" onclick="setCamPrompt('webcam_inv')">Inventory</button>
+              <button class="btn btn-ghost webcam-btn" onclick="setCamPrompt('webcam_security')">Security/Surveillance</button>
+            </div>
+          </details>
+
+          <!-- Fisheye quick prompts -->
+          <details class="fisheye-box">
+            <summary>Fisheye quick prompts</summary>
+            <div class="fisheye-content">
+              <button class="btn btn-ghost fisheye-btn" onclick="setCamPrompt('fisheye_nav')">Navigation (360 fisheye)</button>
+              <button class="btn btn-ghost fisheye-btn" onclick="setCamPrompt('fisheye_two')">Dewarped (two panoramas)</button>
+              <button class="btn btn-ghost fisheye-btn" onclick="setCamPrompt('fisheye_json')">STRICT JSON (parseable)</button>
+              <button class="btn btn-ghost fisheye-btn" onclick="setCamPrompt('fisheye_ppe')">People & PPE</button>
+              <button class="btn btn-ghost fisheye-btn" onclick="setCamPrompt('fisheye_inv')">Equipment inventory</button>
+            </div>
+          </details>
+
+          <div class="spacer"></div>
+          <div class="stream-wrap"><img class="stream" id="cam-stream" alt="camera stream" /></div>
+          <div class="hint">Caption text is overlaid on the image and also logged to the right panel.</div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><span class="chip">Camera captions</span></div>
+            <div class="controls">
+              <input id="cam-instruction" type="text" placeholder="Decision instruction (optional)" />
+              <label class="chip"><input type="checkbox" id="cam-auto-decide"> Auto</label>
+              <button type="button" class="btn btn-ghost" onclick="decideCamera()">Decide now</button>
+              <button type="button" class="btn btn-ghost" onclick="clearCamHistory()">Clear</button>
+            </div>
+          </div>
+          <div id="cam-chat" class="chat" aria-live="polite"></div>
+          <div class="spacer"></div>
+          <div id="cam-action" class="msg"></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="spacer"></div>
+
+    <!-- VIDEO -->
+    <section id="video-section" class="hidden">
+      <div class="panel">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><span class="chip">Server video</span></div>
+            <div class="controls">
+              <button id="open-stream" class="btn btn-primary" type="button">Open</button>
+              <button type="button" class="btn btn-ghost" onclick="restartVideoStream()">Restart</button>
+              <button type="button" class="btn btn-ghost" onclick="stopStream('file-stream')">Stop</button>
+              <button type="button" class="btn btn-ghost" onclick="choose('camera')">Switch to Camera</button>
+            </div>
+          </div>
+
+          <div class="controls" style="margin-bottom:8px;">
+            <label class="chip" for="vid-model">Model</label>
+            <select id="vid-model" title="Model (video)">
+              <option value="fastvlm" selected>FastVLM (0.5B)</option>
+              <option value="qwen">Qwen2.5-VL (3B)</option>
+            </select>
+
+            <label class="chip" for="vid-preset">Prompt</label>
+            <select id="vid-preset" title="Prompt preset (video)">
+              <option value="balanced">Balanced scene + key objects</option>
+              <option value="json">Structured JSON (counts + locations)</option>
+              <option value="nav">Navigation (free space + hazards)</option>
+              <option value="ppe">Human & PPE check</option>
+              <option value="inv">Equipment inventory</option>
+              <option value="fisheye_nav">Fisheye navigation (360)</option>
+              <option value="fisheye_two">Fisheye dewarped (two panoramas)</option>
+              <option value="fisheye_json">Fisheye JSON (parseable)</option>
+              <option value="fisheye_ppe">Fisheye people & PPE</option>
+              <option value="fisheye_inv">Fisheye equipment inventory</option>
+            </select>
+            <button type="button" class="btn btn-ghost" onclick="loadPresetVid()">Use prompt</button>
+
+            <label class="chip" for="vid-speed">Speed</label>
+            <select id="vid-speed" title="Speed preset (video)">
+              <option value="balanced">Balanced</option>
+              <option value="fast">Fast</option>
+              <option value="quality">Quality</option>
+            </select>
+            <!-- Now auto restarts -->
+            <button type="button" class="btn btn-ghost" onclick="applySpeedVid(true)">Use speed</button>
+          </div>
+
+          <div class="controls">
+            <input id="video-path" type="text" placeholder="/absolute/path/to/video.mp4" />
+            <input id="vid-prompt" type="text" placeholder="Prompt (video)" />
+            <input id="vid-analyze" type="number" min="1" max="600" value="30" title="analyze_every" />
+            <input id="vid-everyn" type="number" min="1" max="10" value="2" title="every_n" />
+            <input id="vid-maxwidth" type="number" min="320" max="3840" value="1920" title="max_width" />
+            <input id="vid-maxtok"   type="number" min="8" max="256"  value="96"   title="max_new_tokens" />
+          </div>
+
+          <details class="fisheye-box">
+            <summary>Fisheye quick prompts</summary>
+            <div class="fisheye-content">
+              <button class="btn btn-ghost fisheye-btn" onclick="setVidPrompt('fisheye_nav')">Navigation (360 fisheye)</button>
+              <button class="btn btn-ghost fisheye-btn" onclick="setVidPrompt('fisheye_two')">Dewarped (two panoramas)</button>
+              <button class="btn btn-ghost fisheye-btn" onclick="setVidPrompt('fisheye_json')">STRICT JSON (parseable)</button>
+              <button class="btn btn-ghost fisheye-btn" onclick="setVidPrompt('fisheye_ppe')">People & PPE</button>
+              <button class="btn btn-ghost fisheye-btn" onclick="setVidPrompt('fisheye_inv')">Equipment inventory</button>
+            </div>
+          </details>
+
+          <div class="spacer"></div>
+          <div class="stream-wrap"><img class="stream" id="file-stream" alt="video stream (server file)" /></div>
+          <div class="hint">For production, restrict allowed paths to a safe directory.</div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><span class="chip">Video captions</span></div>
+            <div class="controls">
+              <input id="vid-instruction" type="text" placeholder="Decision instruction (optional)" />
+              <label class="chip"><input type="checkbox" id="vid-auto-decide"> Auto</label>
+              <button type="button" class="btn btn-ghost" onclick="decideVideo()">Decide now</button>
+              <button type="button" class="btn btn-ghost" onclick="clearVidHistory()">Clear</button>
+            </div>
+          </div>
+          <div id="vid-chat" class="chat" aria-live="polite"></div>
+          <div class="spacer"></div>
+          <div id="vid-action" class="msg"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    // ---------- THEME ----------
+    const THEME_KEY = "vl_theme";
+    const $html = document.documentElement, $icon = document.getElementById('theme-icon'), $toggle = document.getElementById('theme-toggle'), $label = document.getElementById('theme-label');
+    function setTheme(mode){
+      $html.setAttribute('data-theme', mode);
+      localStorage.setItem(THEME_KEY, mode);
+      const isLight = getComputedStyle($html).getPropertyValue('--bg').trim() === '#f7f7fb';
+      if(isLight){ $icon.innerHTML = '☀️'; $label.textContent = 'Light'; $toggle.setAttribute('aria-pressed','false'); }
+      else { $icon.innerHTML = '🌙'; $label.textContent = 'Dark'; $toggle.setAttribute('aria-pressed','true'); }
+    }
+    function initTheme(){ const saved = localStorage.getItem(THEME_KEY); if(saved === 'light' || saved === 'dark' || saved === 'auto') setTheme(saved); else setTheme('auto'); }
+    $toggle.addEventListener('click', ()=>{ const cur = $html.getAttribute('data-theme') || 'auto'; const next = cur === 'auto' ? 'light' : (cur === 'light' ? 'dark' : 'auto'); setTheme(next); });
+    initTheme();
+
+    // ---- PROMPT PRESETS (incl. webcam & fisheye) ----
+    const PRESETS = {
+      // Generic (works for many cameras)
+      balanced: `Brief scene summary (≤25 words). Then 6–10 key objects with coarse location (left/center/right) and why relevant for navigation. Be factual.`,
+      json: `Return STRICT JSON ONLY:
+{
+  "summary":"<<=20 words>",
+  "objects":[{"name":"<class>","count":0,"instances":[{"position":"left|center|right","notes":"...", "confidence":0.0}]}],
+  "risks":["trip hazard: cable"]
+}`,
+      nav: `Tasks:
+1) One-sentence scene summary.
+2) Immediate obstacles within ~1–2m: object + left/center/right.
+3) Safer next move {forward/back/left/right/hold} + one-line reason.
+Keep it brief and factual.`,
+
+      ppe: `Report ONLY if people are present. For each person: position (left/center/right), activity, PPE hints, distance (near/mid/far), confidence. If none: "No people detected."`,
+      inv: `Inventory visible equipment (benches, PCs/monitors, carts, toolboxes, power tools, cables, storage racks). Provide concise bullets with coarse locations.`,
+
+      // Webcam-specific
+      webcam_quick: `You see a forward-facing monocular WEBCAM frame (no fisheye). Ignore UI overlays/reflections. Give a concise, factual caption (≤20 words) focused on salient objects and obstacles.`,
+      webcam_nav: `WEBCAM (forward-facing). Goal: navigation. List near obstacles (≤2m) with left/center/right, then suggest safer move {forward/left/right/hold} with a one-line rationale. Be concise.`,
+      webcam_json: `WEBCAM (forward-facing). Return STRICT JSON ONLY:
+{
+  "summary":"<<=18 words>",
+  "obstacles":[{"name":"<class>","position":"left|center|right","distance":"near|mid|far","notes":"<short>","confidence":0.0}],
+  "move":{"direction":"forward|left|right|hold","reason":"<one line>"},
+  "risks":[]
+}`,
+      webcam_ppe: `WEBCAM. If people visible, list each: {"position":"left|center|right","distance":"near|mid|far","activity":"...","ppe":"helmet|gloves|none|unknown","confidence":0..1}. Else: "No people detected."`,
+      webcam_inv: `WEBCAM in lab/office. Inventory key items (chairs, desks, monitors, toolboxes, carts). Keep ≤10 bullets: "<item>: <count> — typical positions".`,
+      webcam_security: `WEBCAM surveillance. Summarize activity (entry/exit/motion), list persons/vehicles with left/center/right and near/mid/far, note suspicious behavior. Keep it concise.`,
+
+      // Fisheye/360 (as before)
+      fisheye_nav: `360° FISHEYE view. List immediate obstacles (≤2m) as "<object> — bearing <deg> (~<o’clock>), distance <near|mid>", then suggest {forward/back/left/right/hold} + reason.`,
+      fisheye_two: `360° dewarped into TWO horizontal panoramas (TOP 0–180°, BOTTOM 180–360°). Obstacles within ~2 m: "<object> — panel <top|bottom>, position <left|center|right>". Suggest safer move.`,
+      fisheye_json: `FISHEYE. STRICT JSON ONLY:
+{
+  "summary":"<<=18 words>",
+  "obstacles":[{"name":"<class>","bearing_deg":0,"clock":"12","distance":"near|mid|far","notes":"<short>","confidence":0.0}],
+  "move":{"direction":"forward|back|left|right|hold","reason":"<one line>"},
+  "risks":[]
+}`,
+      fisheye_ppe: `FISHEYE. Only if people visible: {"bearing_deg":<0..359>,"clock":"<1..12>","distance":"near|mid|far","activity":"...","ppe":"helmet|gloves|none|unknown","confidence":0..1}. Else: "No people detected."`,
+      fisheye_inv: `FISHEYE in lab/workshop. Inventory equipment (benches, monitors, carts, toolboxes, power tools, cables, racks). ≤10 bullets with bearings or zones.`
+    };
+
+    // ---- SPEED/QUALITY PRESETS
+    const SPEEDS = {
+      fast:     { every_n: 1, analyze_every: 6,  max_width: 960,  max_new_tokens: 24 },
+      balanced: { every_n: 1, analyze_every: 10, max_width: 1280, max_new_tokens: 32 },
+      quality:  { every_n: 1, analyze_every: 20, max_width: 1920, max_new_tokens: 64 },
+    };
+
+    function loadPresetCam(){ document.getElementById('cam-prompt').value = PRESETS[document.getElementById('cam-preset').value] || ''; }
+    function loadPresetVid(){ document.getElementById('vid-prompt').value = PRESETS[document.getElementById('vid-preset').value] || ''; }
+    function setCamPrompt(key){ document.getElementById('cam-prompt').value = PRESETS[key] || ''; }
+    function setVidPrompt(key){ document.getElementById('vid-prompt').value = PRESETS[key] || ''; }
+
+    function applySpeedCam(autoRestart){
+      const s = SPEEDS[document.getElementById('cam-speed').value]; if(!s) return;
+      document.getElementById('cam-everyn').value   = s.every_n;
+      document.getElementById('cam-analyze').value  = s.analyze_every;
+      document.getElementById('cam-maxwidth').value = s.max_width;
+      document.getElementById('cam-maxtok').value   = s.max_new_tokens;
+      if(autoRestart) restartCam();
+    }
+    function applySpeedVid(autoRestart){
+      const s = SPEEDS[document.getElementById('vid-speed').value]; if(!s) return;
+      document.getElementById('vid-everyn').value   = s.every_n;
+      document.getElementById('vid-analyze').value  = s.analyze_every;
+      document.getElementById('vid-maxwidth').value = s.max_width;
+      document.getElementById('vid-maxtok').value   = s.max_new_tokens;
+      if(autoRestart) restartVideoStream();
+    }
+
+    // --- URL helpers
+    function getParam(name){ const url = new URL(window.location.href); return url.searchParams.get(name); }
+    function setParam(name, value){ const url = new URL(window.location.href);
+      if(value==null) url.searchParams.delete(name); else url.searchParams.set(name, value);
+      history.replaceState(null, "", url.toString());
+    }
+
+    // --- section toggling
+    function choose(mode){
+      const chooser = document.getElementById('chooser');
+      const camSec  = document.getElementById('camera-section');
+      const vidSec  = document.getElementById('video-section');
+      chooser.classList.add('hidden'); camSec.classList.add('hidden'); vidSec.classList.add('hidden');
+
+      if(mode === 'camera'){
+        camSec.classList.remove('hidden'); setParam('mode','camera');
+        if(!document.getElementById('cam-prompt').value) document.getElementById('cam-prompt').value = PRESETS.webcam_quick;
+        const img = document.getElementById('cam-stream');
+        if(!img.src || img.src === '') restartCam();
+      } else {
+        vidSec.classList.remove('hidden'); setParam('mode','video');
+        if(!document.getElementById('vid-prompt').value) document.getElementById('vid-prompt').value = PRESETS.fisheye_nav;
+      }
+    }
+    (function init(){ const mode = getParam('mode'); if(mode === 'camera' || mode === 'video'){ choose(mode); } })();
+
+    // ---- stream helpers
+    function stopStream(id){ const img=document.getElementById(id); if(img) img.src=''; }
+    function restartStream(id,url){ const img=document.getElementById(id); if(!img) return; img.src=''; setTimeout(()=>img.src=url,60); }
+
+    // ---- camera controls
+    function restartCam(){
+      const model = document.getElementById('cam-model').value || 'fastvlm';
+      const p  = document.getElementById('cam-prompt').value.trim() || 'Give a short caption.';
+      const ae = +document.getElementById('cam-analyze').value || 30;
+      const en = +document.getElementById('cam-everyn').value || 2;
+      const mw = +document.getElementById('cam-maxwidth').value || 1920;
+      const mt = +document.getElementById('cam-maxtok').value   || 96;
+      const url = `/stream/camera/?model=${encodeURIComponent(model)}&prompt=${encodeURIComponent(p)}&analyze_every=${ae}&every_n=${en}&max_width=${mw}&max_new_tokens=${mt}`;
+      restartStream('cam-stream', url);
+    }
+
+    // ---- caption rendering
+    function formatTime(ts){ const d=new Date(ts*1000); return d.toLocaleTimeString(); }
+    function appendMessages(container, items){
+      const el=document.getElementById(container);
+      if(!el||!items||!items.length) return;
+      const frag=document.createDocumentFragment();
+      for(const it of items){
+        const div=document.createElement('div'); div.className='msg';
+        const meta=document.createElement('div'); meta.className='meta';
+        meta.textContent = `#${it.id} • ${formatTime(it.ts)}`;
+        const body=document.createElement('div'); body.textContent = it.text;
+        div.appendChild(meta); div.appendChild(body);
+        frag.appendChild(div);
+      }
+      el.appendChild(frag); el.scrollTop = el.scrollHeight;
+    }
+
+    // ---- decision rendering + calls
+    function renderAction(id, action){
+        const el = document.getElementById(id);
+        if(!el) return;
+
+        // Local timestamp (e.g., "9/11/2025, 14:03:21")
+        const ts = new Date().toLocaleString();
+
+        if(!action){
+          el.innerHTML = `<div class="meta">Decision at ${ts}</div><div>(no action)</div>`;
+          return;
+        }
+        el.innerHTML = `
+          <div class="meta">Decision at ${ts}</div>
+          <div><b>${action.direction || 'hold'}</b> — ${action.reason || ''}</div>
+        `;
+      }
+
+    async function decideCamera(){
+      try{
+        const instr = (document.getElementById('cam-instruction')?.value || '').trim();
+        const res = await fetch('/decide/camera/?instruction='+encodeURIComponent(instr));
+        const data = await res.json();
+        renderAction('cam-action', data.action);
+      }catch(e){ renderAction('cam-action', {direction:'hold', reason:'error deciding: '+e}); }
+    }
+
+    async function decideVideo(){
+      try{
+        const instr = (document.getElementById('vid-instruction')?.value || '').trim();
+        const path  = (window.vidPath || document.getElementById('video-path').value || '').trim();
+        if(!path){ renderAction('vid-action', {direction:'hold', reason:'no video path'}); return; }
+        const url = `/decide/video/?path=${encodeURIComponent(path)}&instruction=${encodeURIComponent(instr)}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        renderAction('vid-action', data.action);
+      }catch(e){ renderAction('vid-action', {direction:'hold', reason:'error deciding: '+e}); }
+    }
+
+    // --- Auto-decide on new captions (throttled)
+    let _camDecideAt = 0, _vidDecideAt = 0;
+    async function maybeAutoDecideCamera(){
+      const chk = document.getElementById('cam-auto-decide');
+      if(!chk || !chk.checked) return;
+      const now = Date.now();
+      if(now - _camDecideAt > 1500){ _camDecideAt = now; decideCamera(); }
+    }
+    async function maybeAutoDecideVideo(){
+      const chk = document.getElementById('vid-auto-decide');
+      if(!chk || !chk.checked) return;
+      const now = Date.now();
+      if(now - _vidDecideAt > 1500){ _vidDecideAt = now; decideVideo(); }
+    }
+
+    // ---- camera caption polling
+    let camLastId = 0;
+    async function pollCamera(){ try{
+      const res = await fetch('/captions/camera/?after='+camLastId);
+      const data = await res.json();
+      if(Array.isArray(data.items) && data.items.length){
+        camLastId = data.items[data.items.length-1].id;
+        appendMessages('cam-chat', data.items);
+        maybeAutoDecideCamera();
+      }
+    }catch(e){} }
+    setInterval(pollCamera, 1200);
+
+    // ---- video controls + polling
+    document.getElementById('open-stream').addEventListener('click', restartVideoStream);
+    let vidLastId = 0, vidPath = '';
+
+    function restartVideoStream(){
+      const model = document.getElementById('vid-model').value || 'fastvlm';
+      const path = document.getElementById('video-path').value.trim();
+      if(!path) return;
+      const p  = document.getElementById('vid-prompt').value.trim() || 'Give a short caption.';
+      const ae = +document.getElementById('vid-analyze').value || 30;
+      const en = +document.getElementById('vid-everyn').value || 2;
+      const mw = +document.getElementById('vid-maxwidth').value || 1920;
+      const mt = +document.getElementById('vid-maxtok').value   || 96;
+      const url = `/stream/video/?model=${encodeURIComponent(model)}&path=${encodeURIComponent(path)}&prompt=${encodeURIComponent(p)}&analyze_every=${ae}&every_n=${en}&max_width=${mw}&max_new_tokens=${mt}`;
+      const img = document.getElementById('file-stream');
+      img.src = ''; setTimeout(()=>{ img.src = url; }, 60);
+      startVideoPolling(path);
+    }
+    function startVideoPolling(path){
+      vidPath = path; vidLastId = 0;
+      const chat = document.getElementById('vid-chat'); if(chat) chat.innerHTML = '';
+    }
+    async function pollVideo(){
+      if(!vidPath) return;
+      try{
+        const res = await fetch('/captions/video/?path='+encodeURIComponent(vidPath)+'&after='+vidLastId);
+        const data = await res.json();
+        if(Array.isArray(data.items) && data.items.length){
+          vidLastId = data.items[data.items.length-1].id;
+          appendMessages('vid-chat', data.items);
+          maybeAutoDecideVideo();
+        }
+      }catch(e){}
+    }
+    setInterval(pollVideo, 1200);
+
+    // ---- clear history helpers
+    async function clearCamHistory(){ try{ await fetch('/captions/camera/clear/', {method:'POST'}); } catch(e){} camLastId=0; const el=document.getElementById('cam-chat'); if(el) el.innerHTML=''; }
+    async function clearVidHistory(){
+      const path = vidPath || document.getElementById('video-path').value.trim();
+      if(!path){ const el=document.getElementById('vid-chat'); if(el) el.innerHTML=''; vidLastId=0; return; }
+      try{ await fetch('/captions/video/clear/?path='+encodeURIComponent(path), {method:'POST'}); } catch(e){}
+      vidLastId = 0; const el=document.getElementById('vid-chat'); if(el) el.innerHTML='';
+    }
+  </script>
+</body>
+</html>
