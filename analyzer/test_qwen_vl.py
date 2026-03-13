@@ -8,7 +8,11 @@ from typing import Optional
 
 import torch
 from PIL import Image
-from transformers import AutoProcessor, AutoModelForVision2Seq
+from transformers import AutoProcessor
+try:
+    from transformers import AutoModelForVision2Seq as _QwenVLAutoModel
+except Exception:
+    from transformers import AutoModelForImageTextToText as _QwenVLAutoModel
 
 # Try to enable 4-bit on GPU (good for 6GB cards like 1660 Ti)
 try:
@@ -33,10 +37,10 @@ def load_model(model_id: str, use_4bit: bool):
             bnb_4bit_quant_type="nf4",
         )
 
-    model = AutoModelForVision2Seq.from_pretrained(
+    model = _QwenVLAutoModel.from_pretrained(
         model_id,
         device_map="auto",
-        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+        dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
         trust_remote_code=True,
         quantization_config=quant_config,
     )
