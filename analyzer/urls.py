@@ -16,4 +16,8 @@ urlpatterns = [
     path("decide/", views.decide, name="decide"),
     path("decide/camera/", views.decide_camera, name="decide_camera"),
     path("decide/video/", views.decide_video, name="decide_video"),
+
+    # OpenTTS proxy
+    path("tts/voices/", views.opentts_voices, name="opentts_voices"),
+    path("tts/speak/", views.opentts_tts, name="opentts_tts"),
 ]
