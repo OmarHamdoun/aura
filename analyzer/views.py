@@ -18,7 +18,7 @@ from django.views.decorators.csrf import csrf_exempt
 from .inference import FastVLMDescriber, QwenVLDescriber, MiniInternVL2DriveLMDescriber
 from .streaming import ThreadedAnalyzerStream, mjpeg_generator
 from .captions import camera_captions, get_video_buffer, append_caption_jsonl
-from .policy import decide_core  # heuristic policy
+from .policy import decide_core, coerce_obs  # heuristic policy + scene-state normalization
 
 try:
     import mlflow
@@ -51,6 +51,29 @@ Return STRICT JSON ONLY, no prose:
 Use "unknown" if uncertain; keep arrays short and relevant.
 """
 
+SCENE_STATE_JSON_PROMPT = """You are a robot scene-understanding model.
+Analyze the current image or image sequence and return STRICT JSON ONLY.
+Do not choose an action. Do not include recommendations. Only describe scene state.
+
+{
+  "summary": "<<=18 words>",
+  "obstacles": [
+    {
+      "name": "<class>",
+      "bearing_deg": 0,
+      "clock": "12",
+      "position": "left|center|right|unknown",
+      "distance": "near|mid|far|unknown",
+      "notes": "<short note>",
+      "confidence": 0.0
+    }
+  ],
+  "risks": ["trip hazard: cable", "moving person", "narrow passage"]
+}
+
+Use "unknown" when uncertain. Keep arrays short and relevant.
+"""
+
 
 # -------------------------------------------------
 # Model cache: keep one instance per model key
@@ -61,7 +84,10 @@ _MLFLOW_LOCK = threading.Lock()
 _MLFLOW_READY = False
 _MLFLOW_SEQ = 0
 _ALLOWED_DIRECTIONS = {"forward", "back", "left", "right", "hold"}
+def hospital_eval(request):
+    return render(request, "analyzer/hospital_eval.html")
 
+    
 def get_describer(model_key: str):
     key = (model_key or "internvl2").lower()
     if key not in ("fastvlm", "qwen", "internvl2"):
@@ -306,6 +332,13 @@ def _normalize_policy(policy_like):
     return text[:max_chars]
 
 
+def _resolve_decision_provider(provider_override=None):
+    raw = (provider_override or getattr(settings, "ACTION_POLICY_PROVIDER", "heuristic") or "heuristic").strip().lower()
+    if raw in {"heuristic", "openai"}:
+        return raw
+    return "heuristic"
+
+
 def _parse_bool(value, default=False):
     if value is None:
         return default
@@ -427,8 +460,8 @@ def _decide_action_openai(obs_like, instruction: str, include_policy: bool = Fal
     return action, policy
 
 
-def _decide_action(obs_like, instruction: str, include_policy: bool = False):
-    provider = (getattr(settings, "ACTION_POLICY_PROVIDER", "heuristic") or "heuristic").strip().lower()
+def _decide_action(obs_like, instruction: str, include_policy: bool = False, provider_override=None):
+    provider = _resolve_decision_provider(provider_override)
     if provider == "openai":
         try:
             action, policy = _decide_action_openai(obs_like, instruction, include_policy=include_policy)
@@ -721,6 +754,9 @@ def stream_camera(request):
 
     # Optional: force strict JSON for camera if requested
     enforce_json = request.GET.get("enforce_json", "0").lower() in ("1", "true", "yes", "on")
+    if request.GET.get("pipeline", "").strip().lower() == "two_stage":
+        prompt = SCENE_STATE_JSON_PROMPT
+        enforce_json = False
     if enforce_json:
         prompt = FISHEYE_JSON_PROMPT
 
@@ -777,6 +813,9 @@ def stream_video(request):
 
     # Force strict JSON for video if requested
     enforce_json = request.GET.get("enforce_json", "0").lower() in ("1", "true", "yes", "on")
+    if request.GET.get("pipeline", "").strip().lower() == "two_stage":
+        prompt = SCENE_STATE_JSON_PROMPT
+        enforce_json = False
     if enforce_json:
         prompt = FISHEYE_JSON_PROMPT
 
@@ -876,6 +915,7 @@ def decide(request):
 
     obs = payload.get("obs")
     instruction = (payload.get("instruction") or "").strip()
+    provider_override = payload.get("provider")
     include_policy = _parse_bool(
         payload.get("include_policy"),
         default=bool(getattr(settings, "ACTION_OPENAI_GENERATE_POLICY", False)),
@@ -895,8 +935,11 @@ def decide(request):
             "note": "Send obs as dict or text."
         })
 
-    action, policy, provider, note = _decide_action(obs, instruction, include_policy=include_policy)
-    resp = {"action": action, "instruction": instruction, "provider": provider}
+    scene_state = coerce_obs(obs)
+    action, policy, provider, note = _decide_action(
+        scene_state, instruction, include_policy=include_policy, provider_override=provider_override
+    )
+    resp = {"action": action, "instruction": instruction, "provider": provider, "scene_state": scene_state}
     if policy:
         resp["policy"] = policy
     if note:
@@ -914,14 +957,19 @@ def decide_camera(request):
         request.GET.get("include_policy"),
         default=bool(getattr(settings, "ACTION_OPENAI_GENERATE_POLICY", False)),
     )
+    provider_override = request.GET.get("provider")
     obs, last_txt = _latest_obs_from_camera()
 
     # If we found a JSON object, use it
     if isinstance(obs, dict):
-        action, policy, provider, note = _decide_action(obs, instruction, include_policy=include_policy)
+        scene_state = coerce_obs(obs)
+        action, policy, provider, note = _decide_action(
+            scene_state, instruction, include_policy=include_policy, provider_override=provider_override
+        )
         return JsonResponse({
             "source": "json",
             "obs": obs,
+            "scene_state": scene_state,
             "action": action,
             **({"policy": policy} if policy else {}),
             "provider": provider,
@@ -930,10 +978,14 @@ def decide_camera(request):
 
     # No JSON? Fall back to free text (policy.py can parse text)
     if last_txt:
-        action, policy, provider, note = _decide_action(last_txt, instruction, include_policy=include_policy)
+        scene_state = coerce_obs(last_txt)
+        action, policy, provider, note = _decide_action(
+            scene_state, instruction, include_policy=include_policy, provider_override=provider_override
+        )
         return JsonResponse({
             "source": "text",
             "last_caption": last_txt,
+            "scene_state": scene_state,
             "action": action,
             **({"policy": policy} if policy else {}),
             "provider": provider,
@@ -961,13 +1013,18 @@ def decide_video(request):
         request.GET.get("include_policy"),
         default=bool(getattr(settings, "ACTION_OPENAI_GENERATE_POLICY", False)),
     )
+    provider_override = request.GET.get("provider")
     obs, last_txt = _latest_obs_from_video(path)
 
     if isinstance(obs, dict):
-        action, policy, provider, note = _decide_action(obs, instruction, include_policy=include_policy)
+        scene_state = coerce_obs(obs)
+        action, policy, provider, note = _decide_action(
+            scene_state, instruction, include_policy=include_policy, provider_override=provider_override
+        )
         return JsonResponse({
             "source": "json",
             "obs": obs,
+            "scene_state": scene_state,
             "action": action,
             **({"policy": policy} if policy else {}),
             "provider": provider,
@@ -975,10 +1032,14 @@ def decide_video(request):
         })
 
     if last_txt:
-        action, policy, provider, note = _decide_action(last_txt, instruction, include_policy=include_policy)
+        scene_state = coerce_obs(last_txt)
+        action, policy, provider, note = _decide_action(
+            scene_state, instruction, include_policy=include_policy, provider_override=provider_override
+        )
         return JsonResponse({
             "source": "text",
             "last_caption": last_txt,
+            "scene_state": scene_state,
             "action": action,
             **({"policy": policy} if policy else {}),
             "provider": provider,

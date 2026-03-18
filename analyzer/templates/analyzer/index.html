@@ -109,6 +109,7 @@
               <!-- Generic prompts -->
               <option value="balanced">Balanced scene + key objects</option>
               <option value="json">Structured JSON (counts + locations)</option>
+              <option value="two_stage_json">Two-stage scene state</option>
               <option value="nav">Indoor robot navigation</option>
               <option value="urban_nav">Urban driving navigation</option>
               <option value="nav_multi">Navigation (10 questions)</option>
@@ -238,6 +239,7 @@
             <select id="vid-preset" title="Prompt preset (video)">
               <option value="balanced">Balanced scene + key objects</option>
               <option value="json">Structured JSON (counts + locations)</option>
+              <option value="two_stage_json">Two-stage scene state</option>
               <option value="nav">Indoor robot navigation</option>
               <option value="urban_nav">Urban driving navigation</option>
               <option value="nav_multi">Navigation (10 questions)</option>
@@ -492,6 +494,17 @@
   "objects":[{"name":"<class>","count":0,"instances":[{"position":"left|center|right","notes":"...", "confidence":0.0}]}],
   "risks":["trip hazard: cable"]
 }`,
+      two_stage_json: `You are a robot scene-understanding model.
+Analyze the current image or image sequence and return STRICT JSON ONLY.
+Do not choose an action. Do not include recommendations. Only describe scene state.
+
+{
+  "summary":"<<=18 words>",
+  "obstacles":[{"name":"<class>","bearing_deg":0,"clock":"12","position":"left|center|right|unknown","distance":"near|mid|far|unknown","notes":"<short>","confidence":0.0}],
+  "risks":["trip hazard: cable","moving person","narrow passage"]
+}
+
+Use "unknown" when uncertain. Keep arrays short and relevant.`,
       nav: `You are an indoor mobile robot situational-awareness assistant.
 
 First, describe the image in 1–2 concise sentences.
@@ -665,7 +678,8 @@ Answer only that chosen aspect, focusing on the primary safety risk.`,
       const mt = +document.getElementById('cam-maxtok').value   || 96;
       const mf = +document.getElementById('cam-multiframes').value || 1;
       const strict = document.getElementById('cam-enforce-json')?.checked ? 1 : 0;
-      const url = `/stream/camera/?model=${encodeURIComponent(model)}&prompt=${encodeURIComponent(p)}&analyze_every=${ae}&every_n=${en}&max_width=${mw}&max_new_tokens=${mt}&multi_frames=${mf}&enforce_json=${strict}`;
+      const pipeline = p === (PRESETS.two_stage_json || '').trim() ? '&pipeline=two_stage' : '';
+      const url = `/stream/camera/?model=${encodeURIComponent(model)}&prompt=${encodeURIComponent(p)}&analyze_every=${ae}&every_n=${en}&max_width=${mw}&max_new_tokens=${mt}&multi_frames=${mf}&enforce_json=${strict}${pipeline}`;
       restartStream('cam-stream', url);
     }
 
@@ -742,14 +756,15 @@ Answer only that chosen aspect, focusing on the primary safety risk.`,
 
     async function decideFromItem(item, instruction){
       if(!item || !item.text){
-        return { action: { direction:'hold', reason:'no caption yet' }, policy: '' };
+        return { action: { direction:'hold', reason:'no caption yet' }, policy: '', scene_state: null };
       }
       const res = await fetch('/decide/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           obs: item.text,
-          instruction: instruction || ''
+          instruction: instruction || '',
+          provider: 'heuristic'
         })
       });
       return await res.json();
@@ -831,7 +846,8 @@ Answer only that chosen aspect, focusing on the primary safety risk.`,
       const mt = +document.getElementById('vid-maxtok').value   || 96;
       const mf = +document.getElementById('vid-multiframes').value || 1;
       const strict = document.getElementById('vid-enforce-json')?.checked ? 1 : 0;
-      const url = `/stream/video/?model=${encodeURIComponent(model)}&path=${encodeURIComponent(path)}&prompt=${encodeURIComponent(p)}&analyze_every=${ae}&every_n=${en}&max_width=${mw}&max_new_tokens=${mt}&multi_frames=${mf}&enforce_json=${strict}`;
+      const pipeline = p === (PRESETS.two_stage_json || '').trim() ? '&pipeline=two_stage' : '';
+      const url = `/stream/video/?model=${encodeURIComponent(model)}&path=${encodeURIComponent(path)}&prompt=${encodeURIComponent(p)}&analyze_every=${ae}&every_n=${en}&max_width=${mw}&max_new_tokens=${mt}&multi_frames=${mf}&enforce_json=${strict}${pipeline}`;
       const img = document.getElementById('file-stream');
       img.src = ''; setTimeout(()=>{ img.src = url; }, 60);
       startVideoPolling(path);

@@ -5,6 +5,7 @@ urlpatterns = [
     path("", views.index, name="index"),
 
     path("stream/camera/", views.stream_camera, name="stream_camera"),
+    path("hospital/", views.hospital_eval, name="hospital_eval"),
     path("stream/video/", views.stream_video, name="stream_video"),
 
     path("captions/camera/", views.captions_camera, name="captions_camera"),
