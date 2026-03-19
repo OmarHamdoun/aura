@@ -1,0 +1,1254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Aura — Hospital Robot Video Evaluator</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500&display=swap');
+
+  :root {
+    --bg: #0a0c0f;
+    --surface: #111418;
+    --surface2: #181c22;
+    --border: #1f252e;
+    --border2: #2a3140;
+    --text: #d8dde8;
+    --muted: #5c6478;
+    --accent: #00c896;
+    --accent-dim: rgba(0,200,150,0.12);
+    --warn: #f59e0b;
+    --warn-dim: rgba(245,158,11,0.12);
+    --danger: #ef4444;
+    --danger-dim: rgba(239,68,68,0.12);
+    --info: #60a5fa;
+    --info-dim: rgba(96,165,250,0.10);
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  /* ── Header ── */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 24px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .logo-mark {
+    width: 32px; height: 32px;
+    background: var(--accent);
+    border-radius: 6px;
+    display: grid; place-items: center;
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 13px;
+    color: #0a0c0f;
+    flex-shrink: 0;
+  }
+  .header-title { font-weight: 500; font-size: 14px; color: var(--text); }
+  .header-sub { font-size: 11px; color: var(--muted); margin-top: 1px; font-family: var(--mono); }
+  .header-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .status-pill {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 10px;
+    border-radius: 100px;
+    font-family: var(--mono);
+    font-size: 11px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .status-pill.active { color: var(--accent); border-color: rgba(0,200,150,0.3); background: var(--accent-dim); }
+  .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+  /* ── Layout ── */
+  .app {
+    display: grid;
+    grid-template-columns: 320px 1fr 300px;
+    grid-template-rows: 1fr;
+    height: calc(100vh - 57px);
+    gap: 0;
+  }
+
+  /* ── Left panel: Config ── */
+  .config-panel {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    overflow-y: auto;
+  }
+  .panel-section {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .section-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  .field { margin-bottom: 10px; }
+  .field label {
+    display: block;
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 4px;
+    font-family: var(--mono);
+  }
+  .field input[type="text"],
+  .field input[type="number"],
+  .field select,
+  .field textarea {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    padding: 7px 10px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    outline: none;
+    transition: border-color 0.15s;
+    -webkit-appearance: none;
+  }
+  .field input:focus,
+  .field select:focus,
+  .field textarea:focus { border-color: var(--accent); }
+  .field textarea { resize: vertical; min-height: 72px; line-height: 1.5; }
+  .field select option { background: #1a1f28; }
+
+  .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+  /* Prompt cards */
+  .prompt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .prompt-card {
+    padding: 8px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    text-align: left;
+  }
+  .prompt-card:hover { border-color: var(--accent); background: var(--accent-dim); }
+  .prompt-card.active { border-color: var(--accent); background: var(--accent-dim); }
+  .prompt-card-name { font-size: 11px; font-weight: 500; color: var(--text); }
+  .prompt-card-desc { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    border: none;
+    transition: all 0.15s;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #0a0c0f;
+    width: 100%;
+  }
+  .btn-primary:hover { opacity: 0.88; }
+  .btn-primary:disabled { opacity: 0.35; cursor: not-allowed; }
+  .btn-ghost {
+    background: transparent;
+    border: 1px solid var(--border2);
+    color: var(--muted);
+    width: 100%;
+  }
+  .btn-ghost:hover { border-color: var(--text); color: var(--text); }
+
+  /* ── Center: Video + stream ── */
+  .video-panel {
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .video-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .video-toolbar .path-input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    padding: 6px 10px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    outline: none;
+  }
+  .video-toolbar .path-input:focus { border-color: var(--accent); }
+  .toolbar-btn {
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid var(--border2);
+    background: var(--surface2);
+    color: var(--text);
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .toolbar-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .toolbar-btn.run { background: var(--accent); color: #0a0c0f; border-color: var(--accent); }
+  .toolbar-btn.run:hover { opacity: 0.88; }
+  .toolbar-btn.stop { border-color: var(--danger); color: var(--danger); }
+
+  .stream-area {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+    background: #050608;
+  }
+  .stream-area img {
+    max-width: 100%; max-height: 100%;
+    object-fit: contain;
+    display: block;
+  }
+  .stream-placeholder {
+    display: flex; flex-direction: column; align-items: center; gap: 12px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 12px;
+    text-align: center;
+  }
+  .placeholder-icon {
+    width: 48px; height: 48px;
+    border: 1.5px solid var(--border2);
+    border-radius: 8px;
+    display: grid; place-items: center;
+    font-size: 20px;
+    color: var(--border2);
+  }
+
+  /* Summary bar under video */
+  .summary-bar {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+    min-height: 38px;
+  }
+  .summary-bar.visible { display: flex; }
+  .summary-tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    padding: 3px 8px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    text-transform: uppercase;
+  }
+  .summary-tag.hazard { background: var(--danger-dim); color: var(--danger); border: 1px solid rgba(239,68,68,0.3); }
+  .summary-tag.caution { background: var(--warn-dim); color: var(--warn); border: 1px solid rgba(245,158,11,0.3); }
+  .summary-tag.clear { background: var(--accent-dim); color: var(--accent); border: 1px solid rgba(0,200,150,0.3); }
+  .summary-text {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text);
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Stats bar below video */
+  .stats-bar {
+    display: flex; gap: 0;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .stat-cell {
+    flex: 1;
+    padding: 8px 14px;
+    border-right: 1px solid var(--border);
+    font-family: var(--mono);
+  }
+  .stat-cell:last-child { border-right: none; }
+  .stat-label { font-size: 10px; color: var(--muted); }
+  .stat-value { font-size: 14px; font-weight: 500; color: var(--text); margin-top: 1px; }
+  .stat-value.green { color: var(--accent); }
+  .stat-value.yellow { color: var(--warn); }
+  .stat-value.red { color: var(--danger); }
+
+  /* ── Right panel: Caption log ── */
+  .log-panel {
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .log-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .log-title { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .log-actions { display: flex; gap: 6px; }
+  .log-btn {
+    padding: 3px 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    background: transparent;
+    border: 1px solid var(--border2);
+    color: var(--muted);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.12s;
+  }
+  .log-btn:hover { color: var(--text); border-color: var(--text); }
+
+  .log-feed {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .log-feed::-webkit-scrollbar { width: 4px; }
+  .log-feed::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+  .log-entry {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    animation: slideIn 0.2s ease;
+  }
+  @keyframes slideIn { from { opacity: 0; transform: translateY(4px); } }
+  .log-entry.hazard { border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.04); }
+  .log-entry.caution { border-color: rgba(245,158,11,0.4); background: rgba(245,158,11,0.04); }
+  .log-entry.clear { border-color: rgba(0,200,150,0.25); }
+
+  .entry-meta {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  .entry-time { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+  .entry-tag {
+    font-family: var(--mono);
+    font-size: 9px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-weight: 500;
+  }
+  .tag-hazard { background: var(--danger-dim); color: var(--danger); }
+  .tag-caution { background: var(--warn-dim); color: var(--warn); }
+  .tag-clear { background: var(--accent-dim); color: var(--accent); }
+  .tag-info { background: var(--info-dim); color: var(--info); }
+
+  .entry-text {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text);
+    line-height: 1.55;
+    word-break: break-word;
+  }
+  .entry-json {
+    margin-top: 6px;
+    background: var(--surface2);
+    border-radius: 4px;
+    padding: 6px 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 140px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+  }
+  .entry-action {
+    display: flex; align-items: center; gap: 6px;
+    margin-top: 8px;
+    padding: 6px 8px;
+    border-radius: 5px;
+    font-family: var(--mono);
+    font-size: 11px;
+    background: var(--surface2);
+  }
+  .action-dir {
+    font-weight: 500;
+    text-transform: uppercase;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 3px;
+  }
+  .dir-hold { background: var(--danger-dim); color: var(--danger); }
+  .dir-forward { background: var(--accent-dim); color: var(--accent); }
+  .dir-back { background: var(--warn-dim); color: var(--warn); }
+  .dir-left, .dir-right { background: var(--info-dim); color: var(--info); }
+
+  .entry-thumbs {
+    display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap;
+  }
+  .entry-thumbs img {
+    height: 48px; width: auto;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    object-fit: cover;
+  }
+
+  /* Decide section */
+  .decide-panel {
+    border-top: 1px solid var(--border);
+    padding: 12px;
+    flex-shrink: 0;
+  }
+  .decide-row { display: flex; gap: 6px; margin-bottom: 8px; }
+  .decide-input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    padding: 6px 10px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    outline: none;
+  }
+  .decide-input:focus { border-color: var(--accent); }
+  .decide-btn {
+    padding: 6px 12px;
+    background: var(--accent-dim);
+    border: 1px solid rgba(0,200,150,0.3);
+    color: var(--accent);
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .decide-btn:hover { background: var(--accent); color: #0a0c0f; }
+  .decide-result {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    min-height: 44px;
+    color: var(--muted);
+  }
+
+  /* Scrollbar global */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+  /* Empty state */
+  .empty-state {
+    padding: 24px 16px;
+    text-align: center;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.7;
+  }
+
+  /* Tabs */
+  .tabs { display: flex; border-bottom: 1px solid var(--border); }
+  .tab {
+    flex: 1; padding: 8px 0;
+    font-family: var(--mono); font-size: 11px;
+    color: var(--muted);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+    margin-bottom: -1px;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* checkbox toggle */
+  .toggle-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 5px 0;
+  }
+  .toggle-label { font-size: 12px; color: var(--text); }
+  .toggle {
+    position: relative; width: 30px; height: 16px;
+    cursor: pointer;
+  }
+  .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+  .toggle-track {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    background: var(--border2);
+    border-radius: 8px;
+    transition: background 0.2s;
+  }
+  .toggle input:checked + .toggle-track { background: var(--accent); }
+  .toggle-thumb {
+    position: absolute; top: 2px; left: 2px;
+    width: 12px; height: 12px;
+    background: white;
+    border-radius: 50%;
+    transition: transform 0.2s;
+  }
+  .toggle input:checked ~ .toggle-thumb { transform: translateX(14px); }
+
+  .log-filter {
+    display: flex;
+    gap: 6px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .filter-input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: 5px;
+    padding: 5px 8px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    outline: none;
+  }
+  .filter-input:focus { border-color: var(--accent); }
+  .filter-clear-btn {
+    padding: 5px 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    background: var(--danger-dim);
+    border: 1px solid rgba(239,68,68,0.3);
+    color: var(--danger);
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.12s;
+    white-space: nowrap;
+  }
+  .filter-clear-btn:hover { background: var(--danger); color: #fff; }
+    position: absolute;
+    top: 10px; right: 10px;
+    display: flex; flex-direction: column; gap: 4px;
+    pointer-events: none;
+  }
+  .frame-counter {
+    background: rgba(10,12,15,0.85);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo-mark">AU</div>
+  <div>
+    <div class="header-title">Aura — Hospital Robot Evaluator</div>
+    <div class="header-sub">video evaluation mode · v0.1</div>
+  </div>
+  <div class="header-right">
+    <div class="status-pill" id="status-pill">
+      <span class="status-dot"></span>
+      <span id="status-text">idle</span>
+    </div>
+    <div class="status-pill" id="fps-pill">0 fps</div>
+  </div>
+</header>
+
+<div class="app">
+
+  <!-- ── Left: Config ── -->
+  <div class="config-panel">
+
+    <div class="panel-section">
+      <div class="section-label">Model</div>
+      <div class="field">
+        <label>VLM backend</label>
+        <select id="model-select">
+          <option value="internvl2" selected>Mini-InternVL2-2B-DA-DriveLM</option>
+          <option value="qwen">Qwen2.5-VL-3B</option>
+          <option value="fastvlm">FastVLM-0.5B</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="section-label">Hospital prompt</div>
+      <div class="prompt-grid" id="prompt-grid">
+        <button class="prompt-card active" data-key="corridor" onclick="selectPrompt(this)">
+          <div class="prompt-card-name">Corridor nav</div>
+          <div class="prompt-card-desc">Hallways, people, carts</div>
+        </button>
+        <button class="prompt-card" data-key="people" onclick="selectPrompt(this)">
+          <div class="prompt-card-name">People & PPE</div>
+          <div class="prompt-card-desc">Staff, patients, gowns</div>
+        </button>
+        <button class="prompt-card" data-key="equipment" onclick="selectPrompt(this)">
+          <div class="prompt-card-name">Equipment</div>
+          <div class="prompt-card-desc">IV poles, wheelchairs, beds</div>
+        </button>
+        <button class="prompt-card" data-key="hazard" onclick="selectPrompt(this)">
+          <div class="prompt-card-name">Hazard scan</div>
+          <div class="prompt-card-desc">Spills, cables, obstacles</div>
+        </button>
+        <button class="prompt-card" data-key="json_full" onclick="selectPrompt(this)">
+          <div class="prompt-card-name">Full JSON</div>
+          <div class="prompt-card-desc">Structured scene state</div>
+        </button>
+        <button class="prompt-card" data-key="custom" onclick="selectPrompt(this)">
+          <div class="prompt-card-name">Custom</div>
+          <div class="prompt-card-desc">Edit below</div>
+        </button>
+      </div>
+      <div class="field" style="margin-top:10px;">
+        <label>Active prompt</label>
+        <textarea id="prompt-text" rows="4"></textarea>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="section-label">Analysis settings</div>
+      <div class="row-2">
+        <div class="field">
+          <label>analyze_every</label>
+          <input type="number" id="analyze-every" value="30" min="1" max="600"/>
+        </div>
+        <div class="field">
+          <label>every_n</label>
+          <input type="number" id="every-n" value="2" min="1" max="10"/>
+        </div>
+      </div>
+      <div class="row-2">
+        <div class="field">
+          <label>max_new_tokens</label>
+          <input type="number" id="max-tokens" value="120" min="8" max="256"/>
+        </div>
+        <div class="field">
+          <label>playback fps</label>
+          <input type="number" id="fps-limit" value="10" min="1" max="30"/>
+        </div>
+      </div>
+      <div class="row-2">
+        <div class="field">
+          <label>multi_frames</label>
+          <input type="number" id="multi-frames" value="1" min="1" max="8"/>
+        </div>
+        <div class="field">
+          <label>max_width</label>
+          <input type="number" id="max-width" value="1280" min="320" max="3840"/>
+        </div>
+      </div>
+      <div class="toggle-row" style="margin-top:4px;">
+        <span class="toggle-label">Strict JSON output</span>
+        <label class="toggle">
+          <input type="checkbox" id="enforce-json">
+          <span class="toggle-track"></span>
+          <span class="toggle-thumb"></span>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <span class="toggle-label">Auto-decide (heuristic)</span>
+        <label class="toggle">
+          <input type="checkbox" id="auto-decide" checked>
+          <span class="toggle-track"></span>
+          <span class="toggle-thumb"></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="panel-section" style="flex:1;">
+      <div class="section-label">Export</div>
+      <button class="btn btn-ghost" style="margin-bottom:6px;" onclick="exportLog()">Export captions (.jsonl)</button>
+      <button class="btn btn-ghost" onclick="exportSummary()">Export evaluation report</button>
+    </div>
+
+  </div>
+
+  <!-- ── Center: Video ── -->
+  <div class="video-panel">
+    <div class="video-toolbar">
+      <input class="path-input" id="video-path" type="text" placeholder="/absolute/path/to/hospital_video.mp4"/>
+      <button class="toolbar-btn run" id="run-btn" onclick="startStream()">▶ Run</button>
+      <button class="toolbar-btn stop" onclick="stopStream()" style="display:none;" id="stop-btn">■ Stop</button>
+      <button class="toolbar-btn" onclick="restartStream()">↺</button>
+    </div>
+
+    <div class="stream-area" id="stream-area">
+      <div class="stream-placeholder" id="placeholder">
+        <div class="placeholder-icon">▶</div>
+        <div>Enter video path and press Run<br/>to begin evaluation</div>
+      </div>
+      <img id="stream-img" src="" alt="" style="display:none;" onload="onFrameLoad()"/>
+      <div class="frame-marker" id="frame-marker" style="display:none;">
+        <div class="frame-counter" id="frame-counter">frame —</div>
+      </div>
+    </div>
+
+    <!-- Summary bar under video -->
+    <div class="summary-bar" id="summary-bar">
+      <span class="summary-tag" id="summary-tag">—</span>
+      <span class="summary-text" id="summary-text">Waiting for first caption…</span>
+    </div>
+
+    <div class="stats-bar">
+      <div class="stat-cell">
+        <div class="stat-label">captions</div>
+        <div class="stat-value" id="stat-captions">0</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">hazards</div>
+        <div class="stat-value red" id="stat-hazards">0</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">cautions</div>
+        <div class="stat-value yellow" id="stat-cautions">0</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">clear</div>
+        <div class="stat-value green" id="stat-clear">0</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">hold decisions</div>
+        <div class="stat-value" id="stat-holds">0</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">last action</div>
+        <div class="stat-value" id="stat-action">—</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Right: Log ── -->
+  <div class="log-panel">
+    <div class="log-header">
+      <span class="log-title">caption log</span>
+      <div class="log-actions">
+        <button class="log-btn" id="auto-scroll-btn" onclick="toggleAutoScroll()">auto ▼</button>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('all', this)">All</button>
+      <button class="tab" onclick="switchTab('hazard', this)">Hazard</button>
+      <button class="tab" onclick="switchTab('action', this)">Actions</button>
+    </div>
+
+    <div class="log-filter">
+      <input class="filter-input" id="filter-input" type="text" placeholder="Filter captions…" oninput="applyFilter()"/>
+      <button class="filter-clear-btn" onclick="clearAll()">Clear all</button>
+    </div>
+
+    <div class="log-feed" id="log-feed">
+      <div class="empty-state">No captions yet.<br/>Start a stream to see results here.</div>
+    </div>
+
+    <div class="decide-panel">
+      <div class="section-label" style="margin-bottom:8px;">manual decide</div>
+      <div class="decide-row">
+        <input class="decide-input" id="instruction-input" type="text" placeholder="Instruction (e.g. deliver meds to ward 3)"/>
+        <button class="decide-btn" onclick="manualDecide()">Ask</button>
+      </div>
+      <div class="decide-result" id="decide-result">Awaiting captions…</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── Prompt library ──
+const PROMPTS = {
+  corridor: `You are the visual system of a hospital robot navigating a corridor.
+Describe the scene briefly (≤20 words). Then list all obstacles with position (left/center/right), distance (near≤2m / mid 2-5m / far>5m) and urgency. Flag any moving people immediately.
+Return JSON:
+{"summary":"...","obstacles":[{"name":"...","position":"left|center|right","distance":"near|mid|far","moving":true,"urgency":"high|med|low"}],"risks":["..."],"move":{"direction":"forward|hold|left|right|back","reason":"..."}}`,
+
+  people: `Hospital environment. Identify all people in the scene: staff (scrubs/uniforms), patients (gowns/wheelchairs/beds), visitors. Note their position and whether they are moving toward the robot. Also flag any PPE non-compliance (no mask in clinical area, etc.).
+Return JSON:
+{"summary":"...","people":[{"type":"staff|patient|visitor","position":"left|center|right","distance":"near|mid|far","moving_toward_robot":false,"notes":"..."}],"ppe_issues":[],"risks":[],"move":{"direction":"forward|hold|left|right|back","reason":"..."}}`,
+
+  equipment: `Hospital environment. Identify all medical equipment and mobility aids: IV poles, wheelchairs, walkers, gurneys, hospital beds, crash carts, supply carts, monitors. Note position and whether they are attended or unattended. Unattended equipment in corridors is a navigation risk.
+Return JSON:
+{"summary":"...","equipment":[{"name":"...","position":"left|center|right","distance":"near|mid|far","attended":true,"notes":"..."}],"risks":[],"move":{"direction":"forward|hold|left|right|back","reason":"..."}}`,
+
+  hazard: `Hospital environment hazard scan. Look specifically for: floor hazards (spills, puddles, wet floor signs, cables, loose mats), blocked pathways, narrow passages, open doors, signage. Rate each hazard severity (high/medium/low).
+Return JSON:
+{"summary":"...","hazards":[{"type":"...","position":"left|center|right","severity":"high|medium|low","notes":"..."}],"path_clear":true,"risks":[],"move":{"direction":"forward|hold|left|right|back","reason":"..."}}`,
+
+  json_full: `You are a hospital robot scene-understanding model. Analyze the image and return STRICT JSON only. Do not include prose.
+{"summary":"<≤18 words>","obstacles":[{"name":"<class>","bearing_deg":0,"position":"left|center|right|unknown","distance":"near|mid|far|unknown","moving":false,"confidence":0.0,"notes":"..."}],"people_count":0,"equipment_count":0,"path_clear":true,"risks":["..."],"move":{"direction":"forward|hold|left|right|back","reason":"<one line>"}}`,
+
+  custom: ''
+};
+
+// ── State ──
+let streamActive = false;
+let captionPollTimer = null;
+let lastCaptionId = 0;
+let autoScroll = true;
+let activeTab = 'all';
+let allEntries = [];
+let stats = { captions: 0, hazards: 0, cautions: 0, clear: 0, holds: 0 };
+let fpsTimer = null; let fpsCount = 0;
+let videoPath = '';
+
+// Set default prompt
+document.getElementById('prompt-text').value = PROMPTS.corridor;
+
+function selectPrompt(card) {
+  document.querySelectorAll('.prompt-card').forEach(c => c.classList.remove('active'));
+  card.classList.add('active');
+  const key = card.dataset.key;
+  if (key !== 'custom') {
+    document.getElementById('prompt-text').value = PROMPTS[key];
+  }
+}
+
+// ── Build stream URL ──
+function buildStreamUrl() {
+  const path = document.getElementById('video-path').value.trim();
+  const model = document.getElementById('model-select').value;
+  const prompt = document.getElementById('prompt-text').value.trim();
+  const analyzeEvery = document.getElementById('analyze-every').value;
+  const everyN = document.getElementById('every-n').value;
+  const maxTokens = document.getElementById('max-tokens').value;
+  const fps = document.getElementById('fps-limit').value;
+  const multiFrames = document.getElementById('multi-frames').value;
+  const maxWidth = document.getElementById('max-width').value;
+  const enforceJson = document.getElementById('enforce-json').checked ? '1' : '0';
+
+  const params = new URLSearchParams({
+    path, model, prompt,
+    analyze_every: analyzeEvery,
+    every_n: everyN,
+    max_new_tokens: maxTokens,
+    fps,
+    multi_frames: multiFrames,
+    max_width: maxWidth,
+    enforce_json: enforceJson
+  });
+  return `/stream/video/?${params}`;
+}
+
+function buildCaptionsUrl() {
+  const path = document.getElementById('video-path').value.trim();
+  return `/captions/video/?path=${encodeURIComponent(path)}&after=${lastCaptionId}`;
+}
+
+// ── Stream control ──
+function startStream() {
+  videoPath = document.getElementById('video-path').value.trim();
+  if (!videoPath) { alert('Please enter a video path.'); return; }
+
+  streamActive = true;
+  lastCaptionId = 0;
+  allEntries = [];
+  document.getElementById('log-feed').innerHTML = '';
+
+  const img = document.getElementById('stream-img');
+  img.src = buildStreamUrl();
+  img.style.display = 'block';
+  document.getElementById('placeholder').style.display = 'none';
+  document.getElementById('summary-bar').classList.add('visible');
+  document.getElementById('frame-marker').style.display = 'block';
+  document.getElementById('run-btn').style.display = 'none';
+  document.getElementById('stop-btn').style.display = 'inline-flex';
+
+  setStatus('active', 'streaming');
+  startCaptionPoll();
+  startFpsCounter();
+}
+
+function stopStream() {
+  streamActive = false;
+  const img = document.getElementById('stream-img');
+  img.src = '';
+  img.style.display = 'none';
+  document.getElementById('placeholder').style.display = 'flex';
+  document.getElementById('summary-bar').classList.remove('visible');
+  document.getElementById('frame-marker').style.display = 'none';
+  document.getElementById('run-btn').style.display = 'inline-flex';
+  document.getElementById('stop-btn').style.display = 'none';
+  stopCaptionPoll();
+  stopFpsCounter();
+  setStatus('idle', 'idle');
+}
+
+function restartStream() {
+  if (streamActive) {
+    const img = document.getElementById('stream-img');
+    img.src = buildStreamUrl();
+    lastCaptionId = 0;
+  } else { startStream(); }
+}
+
+let frameCount = 0;
+function onFrameLoad() {
+  frameCount++;
+  fpsCount++;
+  document.getElementById('frame-counter').textContent = `frame ${frameCount}`;
+}
+
+// ── Caption polling ──
+function startCaptionPoll() {
+  captionPollTimer = setInterval(async () => {
+    if (!streamActive) return;
+    try {
+      const res = await fetch(buildCaptionsUrl());
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.items && data.items.length) {
+        data.items.forEach(item => processCaption(item));
+      }
+    } catch(e) {}
+  }, 1200);
+}
+
+function stopCaptionPoll() {
+  clearInterval(captionPollTimer);
+  captionPollTimer = null;
+}
+
+// ── Caption processing ──
+function classifyCaption(text) {
+  const obs = tryParseJson(text);
+  if (obs) {
+    const risks = obs.risks || [];
+    const move = obs.move || {};
+    if (risks.length > 0) return 'hazard';
+    const dir = (move.direction || '').toLowerCase();
+    if (['hold','back'].includes(dir)) return 'hazard';
+    if (['left','right'].includes(dir)) return 'caution';
+    return 'clear';
+  }
+  const lower = text.toLowerCase();
+  if (/hazard|danger|collision|blocked|obstacle ahead|stop|spill|wet floor/.test(lower)) return 'hazard';
+  if (/caution|warning|slow|moving|approaching|narrow/.test(lower)) return 'caution';
+  return 'clear';
+}
+
+function tryParseJson(text) {
+  try { return JSON.parse(text.trim()); } catch(_) {}
+  const m = text.match(/\{[\s\S]*\}/);
+  if (m) { try { return JSON.parse(m[0]); } catch(_) {} }
+  return null;
+}
+
+function processCaption(item) {
+  if (item.id <= lastCaptionId) return;
+  lastCaptionId = item.id;
+
+  const cls = classifyCaption(item.text || '');
+  const obs = tryParseJson(item.text || '');
+
+  stats.captions++;
+  if (cls === 'hazard') stats.hazards++;
+  else if (cls === 'caution') stats.cautions++;
+  else stats.clear++;
+
+  let action = null;
+  if (document.getElementById('auto-decide').checked && obs) {
+    fetchDecision(obs, item);
+  }
+
+  const entry = { id: item.id, ts: item.ts, text: item.text, cls, obs, thumbs: item.thumbs || [], action };
+  allEntries.push(entry);
+  updateStats();
+  renderEntry(entry);
+  updateSummaryBar(item.text, obs);
+}
+
+async function fetchDecision(obs, item) {
+  try {
+    const instruction = document.getElementById('instruction-input').value.trim() || 'Navigate hospital corridor safely.';
+    const res = await fetch('/decide/', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ obs, instruction })
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const action = data.action;
+    if (action) {
+      updateEntryAction(item.id, action);
+      if (action.direction === 'hold') stats.holds++;
+      document.getElementById('stat-action').textContent = action.direction.toUpperCase();
+      document.getElementById('stat-action').className = 'stat-value ' + ({hold:'red',forward:'green',back:'yellow',left:'',right:''}[action.direction] || '');
+    }
+  } catch(e) {}
+}
+
+function updateEntryAction(id, action) {
+  const el = document.getElementById(`action-${id}`);
+  if (el) renderActionBadge(el, action);
+  updateStats();
+}
+
+function renderActionBadge(container, action) {
+  const dir = action.direction || 'hold';
+  const cls = {hold:'dir-hold',forward:'dir-forward',back:'dir-back',left:'dir-left',right:'dir-right'}[dir] || 'dir-hold';
+  container.innerHTML = `<span class="action-dir ${cls}">${dir}</span><span style="color:var(--muted);font-size:10px;">${(action.reason||'').slice(0,80)}</span>`;
+}
+
+// ── Render entry ──
+function renderEntry(entry) {
+  if (activeTab === 'hazard' && entry.cls !== 'hazard') return;
+  if (activeTab === 'action' && !entry.action) return;
+
+  const feed = document.getElementById('log-feed');
+
+  // Remove empty state
+  const empty = feed.querySelector('.empty-state');
+  if (empty) empty.remove();
+
+  const div = document.createElement('div');
+  div.className = `log-entry ${entry.cls}`;
+  div.id = `entry-${entry.id}`;
+
+  const tagMap = { hazard: 'tag-hazard', caution: 'tag-caution', clear: 'tag-clear' };
+  const tagText = { hazard: 'HAZARD', caution: 'CAUTION', clear: 'CLEAR' };
+
+  let thumbsHtml = '';
+  if (entry.thumbs && entry.thumbs.length) {
+    thumbsHtml = `<div class="entry-thumbs">${entry.thumbs.slice(0,3).map(t => `<img src="${t}" alt=""/>`).join('')}</div>`;
+  }
+
+  let jsonHtml = '';
+  if (entry.obs) {
+    jsonHtml = `<div class="entry-json">${JSON.stringify(entry.obs, null, 2)}</div>`;
+  }
+
+  const time = new Date(entry.ts * 1000).toLocaleTimeString();
+  div.innerHTML = `
+    <div class="entry-meta">
+      <span class="entry-time">${time} · #${entry.id}</span>
+      <span class="entry-tag ${tagMap[entry.cls]}">${tagText[entry.cls]}</span>
+    </div>
+    ${thumbsHtml}
+    <div class="entry-text">${escHtml(entry.obs ? (entry.obs.summary || entry.text.slice(0,160)) : entry.text.slice(0,200))}</div>
+    ${jsonHtml}
+    <div class="entry-action" id="action-${entry.id}" style="display:${entry.action ? 'flex' : 'none'}">
+    </div>
+  `;
+  if (entry.action) renderActionBadge(div.querySelector(`#action-${entry.id}`), entry.action);
+
+  feed.appendChild(div);
+  if (autoScroll) feed.scrollTop = feed.scrollHeight;
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Summary bar under video ──
+function updateSummaryBar(text, obs) {
+  const bar = document.getElementById('summary-bar');
+  const tag = document.getElementById('summary-tag');
+  const txt = document.getElementById('summary-text');
+  const cls = classifyCaption(text);
+  const summary = obs ? (obs.summary || text.slice(0, 120)) : text.slice(0, 120);
+  bar.classList.add('visible');
+  tag.className = 'summary-tag ' + cls;
+  tag.textContent = cls.toUpperCase();
+  txt.textContent = summary;
+}
+
+// ── Stats ──
+function updateStats() {
+  document.getElementById('stat-captions').textContent = stats.captions;
+  document.getElementById('stat-hazards').textContent = stats.hazards;
+  document.getElementById('stat-cautions').textContent = stats.cautions;
+  document.getElementById('stat-clear').textContent = stats.clear;
+  document.getElementById('stat-holds').textContent = stats.holds;
+}
+
+// ── Manual decide ──
+async function manualDecide() {
+  const instruction = document.getElementById('instruction-input').value.trim() || 'Navigate hospital corridor safely.';
+  const resultEl = document.getElementById('decide-result');
+  resultEl.style.color = 'var(--muted)';
+  resultEl.textContent = 'Requesting…';
+  try {
+    const res = await fetch(`/decide/video/?path=${encodeURIComponent(videoPath)}&instruction=${encodeURIComponent(instruction)}`);
+    if (!res.ok) { resultEl.textContent = `Error: ${res.status}`; return; }
+    const data = await res.json();
+    const action = data.action || {};
+    const dir = action.direction || '—';
+    const reason = action.reason || '';
+    const cls = {hold:'var(--danger)',forward:'var(--accent)',back:'var(--warn)',left:'var(--info)',right:'var(--info)'}[dir] || 'var(--text)';
+    resultEl.style.color = cls;
+    resultEl.textContent = `${dir.toUpperCase()} — ${reason}`;
+  } catch(e) {
+    resultEl.style.color = 'var(--danger)';
+    resultEl.textContent = 'Failed to connect to Aura server.';
+  }
+}
+
+// ── Status ──
+function setStatus(state, text) {
+  const pill = document.getElementById('status-pill');
+  pill.className = 'status-pill' + (state === 'active' ? ' active' : '');
+  document.getElementById('status-text').textContent = text;
+}
+
+// ── FPS counter ──
+function startFpsCounter() {
+  fpsCount = 0;
+  fpsTimer = setInterval(() => {
+    document.getElementById('fps-pill').textContent = `${fpsCount} fps`;
+    fpsCount = 0;
+  }, 1000);
+}
+function stopFpsCounter() {
+  clearInterval(fpsTimer);
+  document.getElementById('fps-pill').textContent = '0 fps';
+}
+
+// ── Tabs ──
+function switchTab(tab, btn) {
+  activeTab = tab;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  rebuildFeed();
+}
+
+function rebuildFeed() {
+  const feed = document.getElementById('log-feed');
+  feed.innerHTML = '';
+  const filtered = allEntries.filter(e => {
+    if (activeTab === 'hazard' && e.cls !== 'hazard') return false;
+    if (activeTab === 'action' && !e.action) return false;
+    if (filterText) {
+      const haystack = (e.text + ' ' + (e.obs ? e.obs.summary || '' : '')).toLowerCase();
+      if (!haystack.includes(filterText)) return false;
+    }
+    return true;
+  });
+  if (!filtered.length) {
+    feed.innerHTML = '<div class="empty-state">No entries for this filter.</div>';
+    return;
+  }
+  filtered.forEach(e => renderEntry(e));
+}
+
+// ── Auto scroll ──
+function toggleAutoScroll() {
+  autoScroll = !autoScroll;
+  document.getElementById('auto-scroll-btn').style.color = autoScroll ? 'var(--accent)' : 'var(--muted)';
+}
+
+// ── Filter ──
+let filterText = '';
+
+function applyFilter() {
+  filterText = document.getElementById('filter-input').value.toLowerCase().trim();
+  rebuildFeed();
+}
+
+function clearAll() {
+  clearLog();
+  document.getElementById('filter-input').value = '';
+  filterText = '';
+  document.getElementById('summary-bar').classList.remove('visible');
+}
+
+function clearLog() {
+  allEntries = [];
+  stats = { captions: 0, hazards: 0, cautions: 0, clear: 0, holds: 0 };
+  lastCaptionId = 0;
+  document.getElementById('log-feed').innerHTML = '<div class="empty-state">Log cleared.</div>';
+  updateStats();
+  document.getElementById('stat-action').textContent = '—';
+}
+
+// ── Export ──
+function exportLog() {
+  const lines = allEntries.map(e => JSON.stringify({
+    id: e.id, ts: e.ts, cls: e.cls, text: e.text, action: e.action
+  }));
+  download('aura_captions.jsonl', lines.join('\n'));
+}
+
+function exportSummary() {
+  const total = stats.captions;
+  const hazardRate = total ? ((stats.hazards / total) * 100).toFixed(1) : '0';
+  const holdRate = total ? ((stats.holds / total) * 100).toFixed(1) : '0';
+
+  const report = `AURA HOSPITAL ROBOT VIDEO EVALUATION REPORT
+Generated: ${new Date().toISOString()}
+Video: ${document.getElementById('video-path').value}
+Model: ${document.getElementById('model-select').value}
+Prompt: ${document.getElementById('prompt-text').value.slice(0,100)}...
+
+SUMMARY
+-------
+Total captions:   ${stats.captions}
+Hazard events:    ${stats.hazards} (${hazardRate}%)
+Cautions:         ${stats.cautions}
+Clear:            ${stats.clear}
+Hold decisions:   ${stats.holds} (${holdRate}%)
+
+HAZARD LOG
+----------
+${allEntries.filter(e => e.cls === 'hazard').map(e =>
+  `[${new Date(e.ts*1000).toLocaleTimeString()}] ${e.obs ? (e.obs.summary || e.text.slice(0,120)) : e.text.slice(0,120)}`
+).join('\n') || '(none)'}
+
+ACTION LOG
+----------
+${allEntries.filter(e => e.action).map(e =>
+  `[${new Date(e.ts*1000).toLocaleTimeString()}] ${e.action.direction.toUpperCase()} — ${e.action.reason}`
+).join('\n') || '(none)'}
+`;
+  download('aura_eval_report.txt', report);
+}
+
+function download(filename, content) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([content], {type:'text/plain'}));
+  a.download = filename;
+  a.click();
+}
+</script>
+</body>
+</html>
