@@ -254,16 +254,23 @@ class ThreadedAnalyzerStream:
                 frame = self.latest_frame.copy()
 
         if self.overlay and self.last_caption:
+            overlay_text = _extract_overlay_text(self.last_caption)
             max_chars = _max_chars_for_width(frame.shape[1])
             font_scale = _font_scale_for_width(frame.shape[1])
             line_h = max(16, int(32 * font_scale))
-            max_lines = max(1, int((frame.shape[0] - 32) / line_h))
-            lines = _wrap_text(self.last_caption, width=max_chars)
+            # Cap at 3 lines so overlay never covers the scene
+            max_lines = min(3, max(1, int((frame.shape[0] - 32) / line_h)))
+            lines = _wrap_text(overlay_text, width=max_chars)
             lines = _clamp_lines(lines, max_lines=max_lines)
+            # Draw a semi-transparent background bar behind the text
+            bar_h = len(lines) * line_h + 16
+            overlay_bar = frame.copy()
+            cv2.rectangle(overlay_bar, (0, 0), (frame.shape[1], bar_h), (0, 0, 0), -1)
+            cv2.addWeighted(overlay_bar, 0.45, frame, 0.55, 0, frame)
             for i, line in enumerate(lines):
-                y = 32 + i * line_h
-                cv2.putText(frame, line, (16, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), 3, cv2.LINE_AA)
-                cv2.putText(frame, line, (16, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
+                y = 24 + i * line_h
+                cv2.putText(frame, line, (12, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), 3, cv2.LINE_AA)
+                cv2.putText(frame, line, (12, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
         return frame
 
     def _next_prompt(self):
@@ -276,6 +283,36 @@ class ThreadedAnalyzerStream:
 
 
 # ---------- helpers ----------
+
+def _extract_overlay_text(caption: str) -> str:
+    """
+    For the video overlay, show only the summary field if the caption is JSON,
+    otherwise show the first sentence of free text.
+    Keeps the overlay short and readable — full JSON stays in the caption log.
+    """
+    import json as _json, re as _re
+    text = (caption or "").strip()
+    # Try to extract summary from JSON
+    try:
+        obj = _json.loads(text)
+        if isinstance(obj, dict) and obj.get("summary"):
+            return str(obj["summary"]).strip()
+    except Exception:
+        pass
+    # Try to find JSON anywhere in the text
+    m = _re.search(r'\{.*\}', text, flags=_re.DOTALL)
+    if m:
+        try:
+            obj = _json.loads(m.group(0))
+            if isinstance(obj, dict) and obj.get("summary"):
+                return str(obj["summary"]).strip()
+        except Exception:
+            pass
+    # Free text: return first sentence only (up to 120 chars)
+    first = _re.split(r'[.\n]', text)[0].strip()
+    return first[:120] if first else text[:120]
+
+
 def _wrap_text(s, width=60):
     words, line, lines = s.split(), [], []
     for w in words:
