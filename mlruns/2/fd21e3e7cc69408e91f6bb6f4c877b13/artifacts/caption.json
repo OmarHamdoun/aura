@@ -1,0 +1,21 @@
+{
+  "ts": 1774550035,
+  "stream_type": "video",
+  "source": "/home/vision/work/aura/movies/hospital corridor.mp4",
+  "model": "internvl2",
+  "prompt": "Hospital environment hazard scan. Look specifically for: floor hazards (spills, puddles, wet floor signs, cables, loose mats), blocked pathways, narrow passages, open doors, signage. Rate each hazard severity (high/medium/low).\nReturn JSON:\n{\"summary\":\"...\",\"hazards\":[{\"type\":\"...\",\"position\":\"left|center|right\",\"severity\":\"high|medium|low\",\"notes\":\"...\"}],\"path_clear\":true,\"risks\":[],\"move\":{\"direction\":\"forward|hold|left|right|back\",\"reason\":\"...\"}}",
+  "text": "The hospital environment hazard scan shows that there are several hazards. The floor hazards include a spill on the floor, a wet floor sign, and a loose mat. The blocked pathways and narrow passages are also present. The open doors and signage are not considered hazards. The severity of these hazards is rated as high.",
+  "thumbs": [
+    "data:image/jpeg;base64,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"
+  ],
+  "frame_id": 14,
+  "frame_ts": 1774550026.6854196,
+  "frame_ids": [
+    14
+  ],
+  "frame_tss": [
+    1774550026.6854196
+  ],
+  "risks": [],
+  "driver_warning": ""
+}

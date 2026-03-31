@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GPAS — YOLO Label Editor</title>
+  <style>
+    :root {
+      --bg: #f5efe3;
+      --panel: rgba(255, 250, 242, 0.92);
+      --ink: #1f1f1f;
+      --muted: #6d665d;
+      --line: rgba(44, 39, 34, 0.14);
+      --accent: #cc5a2f;
+      --accent-2: #1d6f68;
+      --warn: #8b1e1e;
+      --shadow: 0 18px 50px rgba(71, 47, 26, 0.14);
+      --model-a: #1d6f68;
+      --model-b: #185fa5;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: linear-gradient(180deg, #f8f4ea 0%, #efe5d5 100%);
+    }
+    .shell { max-width: 1600px; margin: 0 auto; padding: 20px; }
+
+    .hero { display: flex; justify-content: space-between; gap: 16px; align-items: end; margin-bottom: 18px; }
+    .hero h1 { margin: 0; font-size: clamp(24px,4vw,38px); font-weight: 800; letter-spacing: -0.04em; }
+    .hero p { max-width: 700px; margin: 8px 0 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+    .chip { display: inline-flex; align-items: center; gap: 6px; background: rgba(44,39,34,0.08); border-radius: 99px; padding: 4px 12px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+    .chip.model-a { background: rgba(29,111,104,0.12); color: var(--model-a); }
+    .chip.model-b { background: rgba(24,95,165,0.12); color: var(--model-b); }
+
+    .layout { display: grid; grid-template-columns: 380px minmax(0,1fr); gap: 16px; }
+    .panel { background: var(--panel); backdrop-filter: blur(18px); border: 1px solid var(--line); border-radius: 20px; box-shadow: var(--shadow); }
+
+    .sidebar { padding: 16px; display: flex; flex-direction: column; gap: 14px; max-height: calc(100vh - 60px); position: sticky; top: 16px; overflow: auto; }
+    .section-title { font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+    label { font-size: 13px; font-weight: 600; }
+    input[type=text], input[type=number], input[type=file], select, textarea {
+      border: 1.5px solid var(--line); border-radius: 10px; padding: 8px 10px;
+      font-size: 13px; font-family: inherit; background: rgba(255,255,255,0.7);
+      outline: none; transition: border-color .15s;
+    }
+    input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+    textarea { resize: vertical; min-height: 80px; font-family: "IBM Plex Mono", monospace; font-size: 11px; }
+
+    /* Model tabs for class list */
+    .model-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+    .model-tab {
+      flex: 1; padding: 7px 0; border-radius: 9px; border: 1.5px solid var(--line);
+      background: transparent; font-size: 12px; font-weight: 700; cursor: pointer;
+      transition: all .15s; color: var(--muted);
+    }
+    .model-tab.active-a { border-color: var(--model-a); background: rgba(29,111,104,0.1); color: var(--model-a); }
+    .model-tab.active-b { border-color: var(--model-b); background: rgba(24,95,165,0.1); color: var(--model-b); }
+    .model-tab:hover { opacity: .8; }
+
+    .class-panel { display: none; }
+    .class-panel.visible { display: block; }
+
+    .hint { font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+    .button-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    button { border: none; border-radius: 10px; padding: 9px 16px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit; transition: opacity .15s, transform .08s; }
+    button:active { transform: scale(.97); }
+    button:disabled { opacity: .38; cursor: not-allowed; }
+    .primary { background: var(--accent); color: white; }
+    .secondary { background: var(--accent-2); color: white; }
+    .ghost { background: rgba(44,39,34,0.09); color: var(--ink); }
+    .danger { background: rgba(139,30,30,0.1); color: var(--warn); font-size: 11px; padding: 4px 9px; }
+
+    .status { font-size: 12.5px; background: rgba(44,39,34,0.06); border-radius: 10px; padding: 10px 12px; line-height: 1.5; }
+
+    /* workspace */
+    .workspace { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .statline { display: flex; gap: 8px; flex-wrap: wrap; }
+    .editor-grid { display: grid; grid-template-columns: minmax(0,1fr) 320px; gap: 14px; }
+    .canvas-wrap { position: relative; background: #1a1a1a; border-radius: 14px; overflow: hidden; }
+    canvas { display: block; width: 100%; height: auto; max-height: calc(100vh - 200px); cursor: crosshair; }
+    .side-list { display: flex; flex-direction: column; gap: 10px; max-height: calc(100vh - 200px); overflow-y: auto; }
+    .list-head { font-size: 13px; font-weight: 700; padding-bottom: 6px; border-bottom: 1.5px solid var(--line); }
+    .tools-note { font-size: 11px; color: var(--muted); margin-top: 8px; padding: 8px; background: rgba(44,39,34,0.05); border-radius: 8px; }
+    .empty { color: var(--muted); font-size: 13px; padding: 12px 0; }
+
+    /* detection item */
+    .item { border: 1.5px solid var(--line); border-radius: 12px; padding: 10px 12px; cursor: pointer; transition: border-color .12s, background .12s; }
+    .item:hover { background: rgba(204,90,47,0.04); }
+    .item.active { border-color: var(--accent); background: rgba(204,90,47,0.06); }
+    .item.model-b-item { border-color: rgba(24,95,165,0.3); }
+    .item.model-b-item.active { border-color: var(--model-b); background: rgba(24,95,165,0.06); }
+    .item-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .item-title { font-weight: 700; font-size: 13px; }
+    .item-meta { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+    .item-model-badge { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 99px; }
+    .badge-a { background: rgba(29,111,104,0.12); color: var(--model-a); }
+    .badge-b { background: rgba(24,95,165,0.12); color: var(--model-b); }
+    .small-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+    /* rename tool */
+    .rename-tool { border: 1.5px solid var(--line); border-radius: 12px; padding: 12px; background: rgba(255,255,255,0.5); }
+    .rename-tool h4 { margin: 0 0 10px; font-size: 13px; }
+    .rename-row { display: grid; grid-template-columns: 1fr auto 1fr auto; gap: 6px; align-items: center; margin-bottom: 8px; }
+    .rename-arrow { font-size: 14px; color: var(--muted); text-align: center; }
+
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; }
+      .editor-grid { grid-template-columns: 1fr; }
+      .sidebar { max-height: none; position: static; }
+    }
+  </style>
+</head>
+<body>
+<div class="shell">
+  <div class="hero">
+    <div>
+      <h1>GPAS — YOLO Label Editor</h1>
+      <p>Dual-model annotation tool. Load images and YOLO <code>.txt</code> files, edit labels per model (HDS or OR), rename classes in bulk, then download or save corrected annotations.</p>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <span class="chip model-a">Model A: HDS (58 cls)</span>
+      <span class="chip model-b">Model B: OR (13 cls)</span>
+      <span class="chip">Route: <code>/yolo-editor/</code></span>
+    </div>
+  </div>
+
+  <div class="layout">
+    <!-- ── Sidebar ── -->
+    <div class="panel sidebar">
+
+      <div>
+        <div class="section-title">Inputs</div>
+        <div class="field">
+          <label for="folder-input">Dataset folder</label>
+          <input id="folder-input" type="file" multiple webkitdirectory>
+        </div>
+        <div class="field">
+          <label for="image-file">Single image override</label>
+          <input id="image-file" type="file" accept="image/*">
+        </div>
+        <div class="field">
+          <label for="labels-file">Single YOLO labels file override</label>
+          <input id="labels-file" type="file" accept=".txt">
+        </div>
+      </div>
+
+      <!-- Model class lists -->
+      <div>
+        <div class="section-title">Class Lists</div>
+        <div class="model-tabs">
+          <button class="model-tab active-a" id="tab-a" onclick="switchClassTab('a')">Model A — HDS</button>
+          <button class="model-tab" id="tab-b" onclick="switchClassTab('b')">Model B — OR</button>
+        </div>
+
+        <div class="class-panel visible" id="panel-a">
+          <div class="field">
+            <label>Model A classes (one per line)</label>
+            <textarea id="classes-a" rows="7" placeholder="person&#10;patient&#10;staff&#10;visitor&#10;wheel_chair&#10;iv_pole&#10;..."></textarea>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
+            <input id="new-class-a" type="text" placeholder="new class name" style="flex:1;">
+            <button class="ghost" id="add-class-a-btn" style="white-space:nowrap;">+ Add</button>
+          </div>
+          <button class="ghost" id="load-hds-btn" style="width:100%;margin-bottom:4px;">Load HDS defaults (58 classes)</button>
+        </div>
+
+        <div class="class-panel" id="panel-b">
+          <div class="field">
+            <label>Model B classes (one per line)</label>
+            <textarea id="classes-b" rows="7" placeholder="Anesthesia machine&#10;Bin&#10;C-Arm&#10;Chair&#10;Door&#10;..."></textarea>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
+            <input id="new-class-b" type="text" placeholder="new class name" style="flex:1;">
+            <button class="ghost" id="add-class-b-btn" style="white-space:nowrap;">+ Add</button>
+          </div>
+          <button class="ghost" id="load-or-btn" style="width:100%;margin-bottom:4px;">Load OR defaults (13 classes)</button>
+        </div>
+      </div>
+
+      <!-- Bulk rename tool -->
+      <div class="rename-tool">
+        <h4>Bulk rename class</h4>
+        <div class="hint" style="margin-bottom:8px;">Rename a class name across ALL detections in the current image for the selected model.</div>
+        <div class="field">
+          <label>Model</label>
+          <select id="rename-model">
+            <option value="a">Model A — HDS</option>
+            <option value="b">Model B — OR</option>
+          </select>
+        </div>
+        <div class="rename-row">
+          <input id="rename-from" type="text" placeholder="old name">
+          <span class="rename-arrow">→</span>
+          <input id="rename-to" type="text" placeholder="new name">
+          <button class="ghost" id="rename-btn">Rename</button>
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div>
+        <div class="section-title">Actions</div>
+        <div class="button-row">
+          <button class="primary" id="download-btn" disabled>Download TXT</button>
+          <button class="secondary" id="save-btn" disabled>Save on Server</button>
+        </div>
+        <div class="button-row" style="margin-top:8px;">
+          <button class="ghost" id="prev-btn" disabled>← Prev</button>
+          <button class="ghost" id="next-btn" disabled>Next →</button>
+        </div>
+        <div class="button-row" style="margin-top:8px;">
+          <button class="ghost" id="add-box-btn" disabled>Add Box</button>
+          <button class="ghost" id="fit-btn" disabled>Redraw</button>
+        </div>
+        <div class="hint" style="margin-top:6px;">Keyboard: ← → to navigate images.</div>
+      </div>
+
+      <div class="status" id="status-box"><strong>Status:</strong> waiting for files.</div>
+    </div>
+
+    <!-- ── Workspace ── -->
+    <div class="panel workspace">
+      <div class="toolbar">
+        <div class="statline">
+          <div class="chip" id="image-chip">Image: none</div>
+          <div class="chip" id="item-chip">Item: 0 / 0</div>
+          <div class="chip" id="box-chip">Boxes: 0</div>
+          <div class="chip model-a" id="count-a-chip">Model A: 0</div>
+          <div class="chip model-b" id="count-b-chip">Model B: 0</div>
+        </div>
+        <div class="hint" style="width:100%;">Click a box to select · Drag empty space to draw · Del key to delete selected.</div>
+      </div>
+      <div class="editor-grid">
+        <div class="canvas-wrap">
+          <canvas id="editor-canvas" width="800" height="600"></canvas>
+        </div>
+        <div class="side-list">
+          <div class="list-head">Detections</div>
+          <div id="items"><div class="empty">Load an image and YOLO label file to begin.</div></div>
+          <div class="tools-note">Labels use standard YOLO format: <code>class_id x_center y_center width height</code>. Model tag is preserved in metadata JSON.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Default class lists ─────────────────────────────────────────────
+const HDS_CLASSES = [
+  "TV","bedrail","bedside_monitor","bedside_table","breathing_tube","cabinet",
+  "chair","computer","counter","countertop","curtain","dispenser","door_handle",
+  "drawer","electrosurgical_unit","elevator_panel","exam_table","faucet",
+  "foot_board","hallway_assist_bar","handle","hospital_bed","hs","incubator",
+  "infusion_pump","iv_pole","keyboard","light_switch","medical_drawer",
+  "medical_waste_container","mouse","operating_bed","overbed_table",
+  "panda_baby_warmer","patient","person","press_to_open","push_latch",
+  "restroom_assist_bar","sequential_compression","sink","sofa","staff",
+  "surgical_instrument","surgical_light","syringe_pump","table","telephone",
+  "toilet","toilet_handle","tv","utility_cart","ventilator","visitor",
+  "waste_bin","wheel_chair","xray_bed","xray_machine"
+];
+
+const OR_CLASSES = [
+  "Anesthesia machine","Bin","C-Arm","Chair","Door","Foot stool",
+  "Machine","Medicine Trolley","Patient table","Saline stand",
+  "Theater suction trolley","Trolley","stand"
+];
+
+// ── DOM refs ────────────────────────────────────────────────────────
+const imageFileInput  = document.getElementById("image-file");
+const labelsFileInput = document.getElementById("labels-file");
+const folderInput     = document.getElementById("folder-input");
+const classesAEl      = document.getElementById("classes-a");
+const classesBEl      = document.getElementById("classes-b");
+const newClassAEl     = document.getElementById("new-class-a");
+const newClassBEl     = document.getElementById("new-class-b");
+const downloadBtn     = document.getElementById("download-btn");
+const saveBtn         = document.getElementById("save-btn");
+const addBoxBtn       = document.getElementById("add-box-btn");
+const addClassABtn    = document.getElementById("add-class-a-btn");
+const addClassBBtn    = document.getElementById("add-class-b-btn");
+const fitBtn          = document.getElementById("fit-btn");
+const prevBtn         = document.getElementById("prev-btn");
+const nextBtn         = document.getElementById("next-btn");
+const statusBox       = document.getElementById("status-box");
+const imageChip       = document.getElementById("image-chip");
+const itemChip        = document.getElementById("item-chip");
+const boxChip         = document.getElementById("box-chip");
+const countAChip      = document.getElementById("count-a-chip");
+const countBChip      = document.getElementById("count-b-chip");
+const itemsEl         = document.getElementById("items");
+const canvas          = document.getElementById("editor-canvas");
+const ctx             = canvas.getContext("2d");
+const renameFromEl    = document.getElementById("rename-from");
+const renameToEl      = document.getElementById("rename-to");
+const renameModelEl   = document.getElementById("rename-model");
+const renameBtn       = document.getElementById("rename-btn");
+const loadHdsBtn      = document.getElementById("load-hds-btn");
+const loadOrBtn       = document.getElementById("load-or-btn");
+
+// ── State ────────────────────────────────────────────────────────────
+// Each detection now carries:  { ..., model: "a"|"b" }
+const state = {
+  imageFile: null,
+  imageName: "",
+  image: null,
+  detections: [],       // all detections for current image
+  datasetItems: [],
+  currentItemIndex: -1,
+  selectedIndex: -1,
+  isDrawing: false,
+  drawStart: null,
+  drawCurrent: null,
+  activeModel: "a",     // which model new boxes are assigned to
+};
+
+// ── Class tab switching ─────────────────────────────────────────────
+function switchClassTab(model) {
+  state.activeModel = model;
+  document.getElementById("panel-a").classList.toggle("visible", model === "a");
+  document.getElementById("panel-b").classList.toggle("visible", model === "b");
+  document.getElementById("tab-a").className = "model-tab" + (model === "a" ? " active-a" : "");
+  document.getElementById("tab-b").className = "model-tab" + (model === "b" ? " active-b" : "");
+}
+
+// ── Class list helpers ───────────────────────────────────────────────
+function getClasses(model) {
+  const el = model === "b" ? classesBEl : classesAEl;
+  return el.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+}
+
+function setClasses(model, arr) {
+  const el = model === "b" ? classesBEl : classesAEl;
+  el.value = arr.join("\n");
+}
+
+function classNameFor(classId, model) {
+  const classes = getClasses(model || "a");
+  return classes[classId] || `class_${classId}`;
+}
+
+function setClassName(classId, value, model) {
+  const classes = getClasses(model || "a");
+  while (classes.length <= classId) classes.push(`class_${classes.length}`);
+  classes[classId] = value || `class_${classId}`;
+  setClasses(model || "a", classes);
+  updateChips();
+  renderList();
+  draw();
+}
+
+// ── Status / chips ───────────────────────────────────────────────────
+function setStatus(msg) { statusBox.innerHTML = `<strong>Status:</strong> ${msg}`; }
+
+function updateChips() {
+  imageChip.textContent = `Image: ${state.imageName || "none"}`;
+  itemChip.textContent  = `Item: ${state.currentItemIndex >= 0 ? state.currentItemIndex + 1 : 0} / ${state.datasetItems.length}`;
+  boxChip.textContent   = `Boxes: ${state.detections.length}`;
+  const nA = state.detections.filter(d => (d.model || "a") === "a").length;
+  const nB = state.detections.filter(d => d.model === "b").length;
+  countAChip.textContent = `Model A: ${nA}`;
+  countBChip.textContent = `Model B: ${nB}`;
+  const enabled = !!state.image;
+  downloadBtn.disabled = !enabled;
+  saveBtn.disabled = !enabled;
+  addBoxBtn.disabled = !enabled;
+  fitBtn.disabled = !enabled;
+  prevBtn.disabled = !(state.datasetItems.length > 1 && state.currentItemIndex > 0);
+  nextBtn.disabled = !(state.datasetItems.length > 1 && state.currentItemIndex < state.datasetItems.length - 1);
+}
+
+// ── YOLO label parsing ───────────────────────────────────────────────
+function parseLabels(text, model) {
+  // model = "a" or "b" — all detections in this file are from that model
+  const rows = [];
+  const lines = text.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+  lines.forEach((line, idx) => {
+    const parts = line.split(/\s+/);
+    if (parts.length < 5) return;
+    rows.push({
+      id: `${Date.now()}_${idx}_${Math.random().toString(16).slice(2,8)}`,
+      classId:    Number(parts[0]) || 0,
+      x: Math.max(0, Math.min(1, Number(parts[1]) || 0)),
+      y: Math.max(0, Math.min(1, Number(parts[2]) || 0)),
+      w: Math.max(0, Math.min(1, Number(parts[3]) || 0)),
+      h: Math.max(0, Math.min(1, Number(parts[4]) || 0)),
+      confidence: parts.length > 5 ? Number(parts[5]) : null,
+      model: model || "a",
+    });
+  });
+  return rows;
+}
+
+function labelsToText() {
+  return state.detections.map(det =>
+    `${Math.max(0, Math.round(det.classId || 0))} ${det.x.toFixed(6)} ${det.y.toFixed(6)} ${det.w.toFixed(6)} ${det.h.toFixed(6)}`
+  ).join("\n");
+}
+
+// ── Snapshot current dataset item ────────────────────────────────────
+function snapshotCurrentItem() {
+  if (state.currentItemIndex < 0) return;
+  const item = state.datasetItems[state.currentItemIndex];
+  if (!item) return;
+  item.labelsText = labelsToText();
+  item.detections = state.detections.map(det => ({ ...det }));
+}
+
+// ── Metadata payload ─────────────────────────────────────────────────
+function metadataPayload() {
+  return {
+    image_name: state.imageName,
+    item_index: state.currentItemIndex,
+    detection_count: state.detections.length,
+    classes_a: getClasses("a"),
+    classes_b: getClasses("b"),
+    detections: state.detections.map((det, idx) => ({
+      index: idx,
+      model: det.model || "a",
+      class_id: Math.max(0, Math.round(det.classId || 0)),
+      class_name: classNameFor(det.classId, det.model || "a"),
+      confidence: det.confidence ?? null,
+      x_center: Number(det.x.toFixed(6)),
+      y_center: Number(det.y.toFixed(6)),
+      width:    Number(det.w.toFixed(6)),
+      height:   Number(det.h.toFixed(6)),
+    })),
+  };
+}
+
+// ── Box geometry ─────────────────────────────────────────────────────
+function boxToPixels(det) {
+  return {
+    x: (det.x - det.w / 2) * canvas.width,
+    y: (det.y - det.h / 2) * canvas.height,
+    w: det.w * canvas.width,
+    h: det.h * canvas.height,
+  };
+}
+
+function pixelsToBox(x1, y1, x2, y2) {
+  const left   = Math.max(0, Math.min(x1, x2));
+  const top    = Math.max(0, Math.min(y1, y2));
+  const right  = Math.min(canvas.width,  Math.max(x1, x2));
+  const bottom = Math.min(canvas.height, Math.max(y1, y2));
+  const w = right - left, h = bottom - top;
+  if (w < 4 || h < 4) return null;
+  return {
+    x: Math.max(0, Math.min(1, (left + w/2) / canvas.width)),
+    y: Math.max(0, Math.min(1, (top  + h/2) / canvas.height)),
+    w: Math.max(0, Math.min(1, w / canvas.width)),
+    h: Math.max(0, Math.min(1, h / canvas.height)),
+  };
+}
+
+function detectionAt(x, y) {
+  for (let i = state.detections.length - 1; i >= 0; i--) {
+    const r = boxToPixels(state.detections[i]);
+    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return i;
+  }
+  return -1;
+}
+
+// ── Box colour by model ───────────────────────────────────────────────
+const MODEL_A_COLOR_ACTIVE = "#cc5a2f";
+const MODEL_A_COLOR        = "#1d6f68";
+const MODEL_B_COLOR_ACTIVE = "#1e50a0";
+const MODEL_B_COLOR        = "#185fa5";
+
+function boxColor(det, isActive) {
+  if ((det.model || "a") === "b") return isActive ? MODEL_B_COLOR_ACTIVE : MODEL_B_COLOR;
+  return isActive ? MODEL_A_COLOR_ACTIVE : MODEL_A_COLOR;
+}
+
+// ── Draw ─────────────────────────────────────────────────────────────
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (!state.image) {
+    ctx.fillStyle = "#1a1a1a";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#f5efe3";
+    ctx.font = "700 26px IBM Plex Sans, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("Load an image and YOLO labels", canvas.width/2, canvas.height/2 - 8);
+    ctx.font = "400 15px IBM Plex Sans, sans-serif";
+    ctx.fillStyle = "rgba(245,239,227,0.6)";
+    ctx.fillText("Then edit labels and save corrected annotations.", canvas.width/2, canvas.height/2 + 26);
+    return;
+  }
+
+  ctx.drawImage(state.image, 0, 0, canvas.width, canvas.height);
+
+  state.detections.forEach((det, idx) => {
+    const rect = boxToPixels(det);
+    const isActive = idx === state.selectedIndex;
+    const color = boxColor(det, isActive);
+    const model = det.model || "a";
+    const name = classNameFor(det.classId, model);
+    const confText = det.confidence != null && !Number.isNaN(det.confidence)
+      ? ` ${(det.confidence*100).toFixed(1)}%` : "";
+    const tag = `[${model.toUpperCase()}] ${name}${confText}`;
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = isActive ? 4 : 2.5;
+    ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+
+    ctx.font = "700 13px IBM Plex Sans, sans-serif";
+    const tw = ctx.measureText(tag).width;
+    ctx.fillStyle = color;
+    ctx.fillRect(rect.x, Math.max(0, rect.y - 22), tw + 14, 22);
+    ctx.fillStyle = "#fff7f2";
+    ctx.fillText(tag, rect.x + 7, Math.max(15, rect.y - 6));
+  });
+
+  if (state.isDrawing && state.drawStart && state.drawCurrent) {
+    const x = state.drawStart.x, y = state.drawStart.y;
+    const w = state.drawCurrent.x - x, h = state.drawCurrent.y - y;
+    ctx.strokeStyle = "#8b1e1e";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([8,6]);
+    ctx.strokeRect(x, y, w, h);
+    ctx.setLineDash([]);
+  }
+}
+
+// ── Render detection list ─────────────────────────────────────────────
+function renderList() {
+  if (!state.detections.length) {
+    itemsEl.innerHTML = `<div class="empty">No detections. Click <strong>Add Box</strong> and draw.</div>`;
+    updateChips(); draw(); return;
+  }
+
+  itemsEl.innerHTML = "";
+  state.detections.forEach((det, idx) => {
+    const model = det.model || "a";
+    const className = classNameFor(det.classId, model);
+    const confText = det.confidence != null && !Number.isNaN(det.confidence)
+      ? `${(det.confidence*100).toFixed(1)}%` : "n/a";
+    const isActive = idx === state.selectedIndex;
+
+    const div = document.createElement("div");
+    div.className = `item${isActive ? " active" : ""}${model === "b" ? " model-b-item" : ""}`;
+    div.innerHTML = `
+      <div class="item-top">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <div class="item-title">Detection ${idx+1}</div>
+          <span class="item-model-badge ${model === "b" ? "badge-b" : "badge-a"}">Model ${model.toUpperCase()}</span>
+        </div>
+        <button class="danger" data-action="delete" data-index="${idx}">Delete</button>
+      </div>
+      <div class="item-meta">${(det.w*100).toFixed(1)}% × ${(det.h*100).toFixed(1)}% · conf ${confText}</div>
+      <div class="small-grid">
+        <div class="field">
+          <label>Class ID</label>
+          <input type="number" min="0" step="1" data-action="class-id" data-index="${idx}" value="${det.classId}">
+        </div>
+        <div class="field">
+          <label>Class name</label>
+          <input type="text" data-action="class-name" data-index="${idx}" value="${className}">
+        </div>
+      </div>
+      <div class="small-grid">
+        <div class="field">
+          <label>Model</label>
+          <select data-action="model" data-index="${idx}">
+            <option value="a"${model==="a"?" selected":""}>Model A — HDS</option>
+            <option value="b"${model==="b"?" selected":""}>Model B — OR</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Confidence</label>
+          <input type="number" min="0" max="1" step="0.01" data-action="confidence" data-index="${idx}"
+            value="${det.confidence ?? ""}" placeholder="Optional">
+        </div>
+      </div>
+    `;
+    div.addEventListener("click", (e) => {
+      if (!["INPUT","BUTTON","SELECT"].includes(e.target.tagName)) {
+        state.selectedIndex = idx; renderList(); draw();
+      }
+    });
+    itemsEl.appendChild(div);
+  });
+  updateChips(); draw();
+}
+
+// ── Image loading ─────────────────────────────────────────────────────
+function loadImage(file) {
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    state.image = img;
+    state.imageFile = file;
+    state.imageName = file.name;
+    canvas.width  = img.naturalWidth  || img.width;
+    canvas.height = img.naturalHeight || img.height;
+    updateChips(); renderList();
+    setStatus(`Loaded image <strong>${file.name}</strong>.`);
+    URL.revokeObjectURL(url);
+  };
+  img.src = url;
+}
+
+async function loadDatasetItem(index) {
+  snapshotCurrentItem();
+  const item = state.datasetItems[index];
+  if (!item) return;
+  state.currentItemIndex = index;
+  state.imageFile = item.imageFile;
+  state.imageName = item.imageFile.name;
+  // Use saved detections if already edited, else parse
+  state.detections = item.detections
+    ? item.detections.map(d => ({...d}))
+    : (item.labelsText ? parseLabels(item.labelsText, item.modelHint || "a") : []);
+  state.selectedIndex = state.detections.length ? 0 : -1;
+  loadImage(item.imageFile);
+  setStatus(`Item <strong>${state.imageName}</strong> (${index+1}/${state.datasetItems.length}).`);
+}
+
+async function loadFolder(files) {
+  const list = Array.from(files || []);
+  if (!list.length) return;
+  const imageMap = new Map(), labelMap = new Map(), labelByBase = new Map();
+  const isImage = n => /\.(jpg|jpeg|png|webp|bmp)$/i.test(n);
+  const isLabel = n => /\.txt$/i.test(n);
+  const basenameOf = p => {
+    const clean = String(p || "").replace(/\\/g, "/");
+    const last = clean.split("/").pop() || clean;
+    return last.replace(/\.[^.]+$/, "");
+  };
+  const inferModelHint = p => {
+    const s = String(p || "").toLowerCase();
+    if (/(^|\/)(model_b|or|hospital_yolo|labels_b)(\/|$)/.test(s)) return "b";
+    return "a";
+  };
+
+  for (const file of list) {
+    const rel = file.webkitRelativePath || file.name;
+    const key = rel.replace(/\.[^.]+$/, "");
+    if (isImage(file.name)) imageMap.set(key, file);
+    else if (isLabel(file.name)) {
+      labelMap.set(key, file);
+      const base = basenameOf(rel);
+      if (!labelByBase.has(base)) labelByBase.set(base, []);
+      labelByBase.get(base).push(file);
+    }
+  }
+
+  const items = [];
+  for (const [key, imageFile] of imageMap) {
+    const imageRel = imageFile.webkitRelativePath || imageFile.name;
+    const base = basenameOf(imageRel);
+    let labelFile = labelMap.get(key) || null;
+    if (!labelFile) {
+      const matches = labelByBase.get(base) || [];
+      if (matches.length === 1) labelFile = matches[0];
+    }
+    const labelsText = labelFile ? await labelFile.text() : "";
+    items.push({
+      key,
+      imageFile,
+      labelFile,
+      labelsText,
+      modelHint: inferModelHint(labelFile ? (labelFile.webkitRelativePath || labelFile.name) : imageRel),
+    });
+  }
+  items.sort((a,b) => a.imageFile.name.localeCompare(b.imageFile.name));
+  state.datasetItems = items;
+
+  if (!items.length) { setStatus("No images found."); updateChips(); draw(); return; }
+  await loadDatasetItem(0);
+}
+
+// ── Event listeners ──────────────────────────────────────────────────
+imageFileInput.addEventListener("change", () => {
+  const [file] = imageFileInput.files || [];
+  if (file) { state.datasetItems = []; state.currentItemIndex = -1; loadImage(file); }
+});
+
+labelsFileInput.addEventListener("change", async () => {
+  const [file] = labelsFileInput.files || [];
+  if (!file) return;
+  const text = await file.text();
+  snapshotCurrentItem();
+  state.detections = parseLabels(text, state.activeModel);
+  state.selectedIndex = state.detections.length ? 0 : -1;
+  renderList();
+  setStatus(`Loaded ${state.detections.length} detections from <strong>${file.name}</strong> as Model ${state.activeModel.toUpperCase()}.`);
+});
+
+folderInput.addEventListener("change", async () => { await loadFolder(folderInput.files); });
+
+[classesAEl, classesBEl].forEach(el => el.addEventListener("input", () => { updateChips(); renderList(); }));
+
+addClassABtn.addEventListener("click", () => {
+  const name = newClassAEl.value.trim(); if (!name) return;
+  const arr = getClasses("a"); arr.push(name); setClasses("a", arr);
+  newClassAEl.value = "";
+  updateChips(); renderList(); setStatus(`Added class <strong>${name}</strong> to Model A.`);
+});
+
+addClassBBtn.addEventListener("click", () => {
+  const name = newClassBEl.value.trim(); if (!name) return;
+  const arr = getClasses("b"); arr.push(name); setClasses("b", arr);
+  newClassBEl.value = "";
+  updateChips(); renderList(); setStatus(`Added class <strong>${name}</strong> to Model B.`);
+});
+
+loadHdsBtn.addEventListener("click", () => {
+  setClasses("a", HDS_CLASSES);
+  updateChips(); renderList();
+  setStatus(`Loaded ${HDS_CLASSES.length} HDS class defaults into Model A.`);
+});
+
+loadOrBtn.addEventListener("click", () => {
+  setClasses("b", OR_CLASSES);
+  updateChips(); renderList();
+  setStatus(`Loaded ${OR_CLASSES.length} OR class defaults into Model B.`);
+});
+
+// Rename bulk tool
+renameBtn.addEventListener("click", () => {
+  const from = renameFromEl.value.trim();
+  const to   = renameToEl.value.trim();
+  const model = renameModelEl.value;
+  if (!from || !to) { setStatus("Enter both old and new class names."); return; }
+
+  const classes = getClasses(model);
+  let renamedCount = 0;
+  classes.forEach((c, i) => {
+    if (c.toLowerCase() === from.toLowerCase()) { classes[i] = to; renamedCount++; }
+  });
+  setClasses(model, classes);
+
+  // Update class names in all detections
+  state.detections.forEach(det => {
+    if ((det.model || "a") === model) {
+      const name = classNameFor(det.classId, model);
+      if (name.toLowerCase() === from.toLowerCase()) {
+        setClassName(det.classId, to, model);
+      }
+    }
+  });
+
+  updateChips(); renderList();
+  setStatus(`Renamed <strong>${from}</strong> → <strong>${to}</strong> in Model ${model.toUpperCase()} (${renamedCount} class entries updated).`);
+  renameFromEl.value = ""; renameToEl.value = "";
+});
+
+// Detection item events
+itemsEl.addEventListener("input", (e) => {
+  const action = e.target.dataset.action;
+  const idx = Number(e.target.dataset.index);
+  const det = state.detections[idx];
+  if (!det) return;
+
+  if (action === "class-id") {
+    det.classId = Math.max(0, Number(e.target.value) || 0);
+  } else if (action === "confidence") {
+    det.confidence = e.target.value === "" ? null : Math.max(0, Math.min(1, Number(e.target.value) || 0));
+  } else if (action === "class-name") {
+    setClassName(det.classId, e.target.value.trim(), det.model || "a");
+    return;
+  } else if (action === "model") {
+    det.model = e.target.value;
+  }
+  renderList();
+});
+
+itemsEl.addEventListener("click", (e) => {
+  const action = e.target.dataset.action;
+  const idx = Number(e.target.dataset.index);
+  if (action !== "delete" || !state.detections[idx]) return;
+  state.detections.splice(idx, 1);
+  state.selectedIndex = Math.min(state.selectedIndex, state.detections.length - 1);
+  renderList();
+  setStatus(`Deleted detection ${idx+1}.`);
+});
+
+addBoxBtn.addEventListener("click", () => {
+  if (!state.image) return;
+  state.selectedIndex = -1; state.isDrawing = false;
+  setStatus(`Drag on canvas to draw a new box (will be assigned to Model ${state.activeModel.toUpperCase()}).`);
+  renderList();
+});
+
+fitBtn.addEventListener("click", draw);
+
+// Canvas helpers
+function getCanvasPoint(e) {
+  const r = canvas.getBoundingClientRect();
+  return {
+    x: (e.clientX - r.left) * (canvas.width / r.width),
+    y: (e.clientY - r.top)  * (canvas.height / r.height),
+  };
+}
+
+canvas.addEventListener("mousedown", (e) => {
+  if (!state.image) return;
+  const pt = getCanvasPoint(e);
+  const hit = detectionAt(pt.x, pt.y);
+  if (hit >= 0) { state.selectedIndex = hit; renderList(); return; }
+  state.isDrawing = true; state.drawStart = pt; state.drawCurrent = pt; draw();
+});
+
+canvas.addEventListener("mousemove", (e) => {
+  if (!state.isDrawing) return; state.drawCurrent = getCanvasPoint(e); draw();
+});
+
+canvas.addEventListener("mouseup", () => {
+  if (!state.isDrawing || !state.drawStart || !state.drawCurrent) return;
+  const box = pixelsToBox(state.drawStart.x, state.drawStart.y, state.drawCurrent.x, state.drawCurrent.y);
+  state.isDrawing = false; state.drawStart = null; state.drawCurrent = null;
+  if (!box) { draw(); return; }
+  const model = state.activeModel;
+  state.detections.push({
+    id: `${Date.now()}_${Math.random().toString(16).slice(2,8)}`,
+    classId: 0, x: box.x, y: box.y, w: box.w, h: box.h, model,
+  });
+  state.selectedIndex = state.detections.length - 1;
+  renderList();
+  setStatus(`Added new box as Model ${model.toUpperCase()} class 0 (${classNameFor(0, model)}).`);
+});
+
+canvas.addEventListener("mouseleave", () => {
+  if (!state.isDrawing) return;
+  state.isDrawing = false; state.drawStart = null; state.drawCurrent = null; draw();
+});
+
+// Delete key
+document.addEventListener("keydown", async (e) => {
+  if (e.target && ["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName)) return;
+  if ((e.key === "Delete" || e.key === "Backspace") && state.selectedIndex >= 0) {
+    state.detections.splice(state.selectedIndex, 1);
+    state.selectedIndex = Math.min(state.selectedIndex, state.detections.length - 1);
+    renderList(); return;
+  }
+  if (e.key === "ArrowLeft"  && state.currentItemIndex > 0) {
+    e.preventDefault(); await loadDatasetItem(state.currentItemIndex - 1);
+  }
+  if (e.key === "ArrowRight" && state.currentItemIndex < state.datasetItems.length - 1) {
+    e.preventDefault(); await loadDatasetItem(state.currentItemIndex + 1);
+  }
+});
+
+// Download
+downloadBtn.addEventListener("click", () => {
+  if (!state.imageName) return;
+  const blob = new Blob([labelsToText() + "\n"], { type: "text/plain;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = state.imageName.replace(/\.[^.]+$/, "") + ".txt";
+  a.click();
+  URL.revokeObjectURL(a.href);
+  setStatus(`Downloaded corrected labels for <strong>${state.imageName}</strong>.`);
+});
+
+// Save to server
+saveBtn.addEventListener("click", async () => {
+  if (!state.imageFile || !state.imageName) return;
+  snapshotCurrentItem();
+  const formData = new FormData();
+  formData.append("image",        state.imageFile);
+  formData.append("image_name",   state.imageName);
+  formData.append("labels_text",  labelsToText());
+  formData.append("classes_text", getClasses("a").join("\n"));
+  formData.append("classes_b_text", getClasses("b").join("\n"));
+  formData.append("meta_json",    JSON.stringify(metadataPayload()));
+
+  saveBtn.disabled = true;
+  setStatus("Saving to server...");
+  try {
+    const res  = await fetch("/yolo-editor/save/", { method: "POST", body: formData });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || "save failed");
+    setStatus(`Saved labels to <strong>${data.labels_path}</strong>.`);
+  } catch (err) {
+    setStatus(`Save failed: <strong>${err.message}</strong>`);
+  } finally {
+    saveBtn.disabled = false;
+  }
+});
+
+prevBtn.addEventListener("click", async () => {
+  if (state.currentItemIndex > 0) await loadDatasetItem(state.currentItemIndex - 1);
+});
+nextBtn.addEventListener("click", async () => {
+  if (state.currentItemIndex < state.datasetItems.length - 1) await loadDatasetItem(state.currentItemIndex + 1);
+});
+
+// Init
+setClasses("a", HDS_CLASSES);
+setClasses("b", OR_CLASSES);
+draw(); updateChips(); renderList();
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "session_id": "1774388749-bdfa36ce",
+  "source": "/home/vision/work/aura/movies/hospital corridor.mp4",
+  "model": "internvl2",
+  "prompt": "You are a hospital robot scene-understanding model. Analyze the image and return STRICT JSON only. Do not include prose.\n{\"summary\":\"<≤18 words>\",\"obstacles\":[{\"name\":\"<class>\",\"bearing_deg\":0,\"position\":\"left|center|right|unknown\",\"distance\":\"near|mid|far|unknown\",\"moving\":false,\"confidence\":0.0,\"notes\":\"...\"}],\"people_count\":0,\"equipment_count\":0,\"path_clear\":true,\"risks\":[\"...\"],\"move\":{\"direction\":\"forward|hold|left|right|back\",\"reason\":\"<one line>\"}}",
+  "yolo_enabled": true,
+  "started_at": 1774388749
+}

@@ -1,0 +1,8 @@
+{
+  "session_id": "1774547103-0f3c6b17",
+  "source": "/home/vision/work/aura/movies/hospital corridor.mp4",
+  "model": "internvl2",
+  "prompt": "Hospital environment. Identify all medical equipment and mobility aids: IV poles, wheelchairs, walkers, gurneys, hospital beds, crash carts, supply carts, monitors. Note position and whether they are attended or unattended. Unattended equipment in corridors is a navigation risk.\nReturn JSON:\n{\"summary\":\"...\",\"equipment\":[{\"name\":\"...\",\"position\":\"left|center|right\",\"distance\":\"near|mid|far\",\"attended\":true,\"notes\":\"...\"}],\"risks\":[],\"move\":{\"direction\":\"forward|hold|left|right|back\",\"reason\":\"...\"}}",
+  "yolo_enabled": true,
+  "started_at": 1774547103
+}

@@ -1,0 +1,21 @@
+{
+  "ts": 1774510484,
+  "stream_type": "video",
+  "source": "/home/vision/work/aura/movies/hospital corridor.mp4",
+  "model": "internvl2",
+  "prompt": "You are the visual system of a hospital robot navigating a corridor.\nDescribe the scene briefly (\u226420 words). Then list all obstacles with position (left/center/right), distance (near\u22642m / mid 2-5m / far>5m) and urgency. Flag any moving people immediately.\nReturn JSON:\n{\"summary\":\"...\",\"obstacles\":[{\"name\":\"...\",\"position\":\"left|center|right\",\"distance\":\"near|mid|far\",\"moving\":true,\"urgency\":\"high|med|low\"}],\"risks\":[\"...\"],\"move\":{\"direction\":\"forward|hold|left|right|back\",\"reason\":\"...\"}}",
+  "text": "(inference error)",
+  "thumbs": [
+    "data:image/jpeg;base64,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"
+  ],
+  "frame_id": 1942,
+  "frame_ts": 1774510484.6979632,
+  "frame_ids": [
+    1942
+  ],
+  "frame_tss": [
+    1774510484.6979632
+  ],
+  "risks": [],
+  "driver_warning": ""
+}

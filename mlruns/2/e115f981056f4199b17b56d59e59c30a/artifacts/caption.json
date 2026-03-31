@@ -1,0 +1,21 @@
+{
+  "ts": 1774387780,
+  "stream_type": "video",
+  "source": "/home/vision/work/aura/movies/hospital corridor.mp4",
+  "model": "internvl2",
+  "prompt": "You are the visual system of a hospital robot navigating a corridor.\nDescribe the scene briefly (\u226420 words). Then list all obstacles with position (left/center/right), distance (near\u22642m / mid 2-5m / far>5m) and urgency. Flag any moving people immediately.\nReturn JSON:\n{\"summary\":\"...\",\"obstacles\":[{\"name\":\"...\",\"position\":\"left|center|right\",\"distance\":\"near|mid|far\",\"moving\":true,\"urgency\":\"high|med|low\"}],\"risks\":[\"...\"],\"move\":{\"direction\":\"forward|hold|left|right|back\",\"reason\":\"...\"}}",
+  "text": "{\"summary\":\"The corridor is clear with one person moving on the left side, approximately 1 meter away.\",\"obstacles\":[{\"name\":\"person\",\"position\":\"left\",\"distance\":\"near\",\"moving\":t",
+  "thumbs": [
+    "data:image/jpeg;base64,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"
+  ],
+  "frame_id": 1980,
+  "frame_ts": 1774387777.6917734,
+  "frame_ids": [
+    1980
+  ],
+  "frame_tss": [
+    1774387777.6917734
+  ],
+  "risks": [],
+  "driver_warning": ""
+}

@@ -1,0 +1,29 @@
+{
+  "session_id": "1774550026-8a5a2408",
+  "source": "/home/vision/work/aura/movies/hospital corridor.mp4",
+  "model": "internvl2",
+  "prompt": "Hospital environment hazard scan. Look specifically for: floor hazards (spills, puddles, wet floor signs, cables, loose mats), blocked pathways, narrow passages, open doors, signage. Rate each hazard severity (high/medium/low).\nReturn JSON:\n{\"summary\":\"...\",\"hazards\":[{\"type\":\"...\",\"position\":\"left|center|right\",\"severity\":\"high|medium|low\",\"notes\":\"...\"}],\"path_clear\":true,\"risks\":[],\"move\":{\"direction\":\"forward|hold|left|right|back\",\"reason\":\"...\"}}",
+  "caption_count": 3,
+  "yolo_frame_count": 145,
+  "last_frame_id": 768,
+  "class_count": 15,
+  "classes": {
+    "hallway_assist_bar": 0,
+    "chair": 1,
+    "door_handle": 2,
+    "waste_bin": 3,
+    "hospital_bed": 4,
+    "Medicine Trolley": 5,
+    "Trolley": 6,
+    "iv_pole": 7,
+    "Saline stand": 8,
+    "wheel_chair": 9,
+    "Chair": 10,
+    "C-Arm": 11,
+    "TV": 12,
+    "Door": 13,
+    "bedrail": 14
+  },
+  "root_dir": "/home/vision/work/aura/media/hospital_eval/hospital_corridor__1774550026-8a5a2408",
+  "finished_at": 1774550058
+}

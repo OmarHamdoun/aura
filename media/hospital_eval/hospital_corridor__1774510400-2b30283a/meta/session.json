@@ -1,0 +1,8 @@
+{
+  "session_id": "1774510400-2b30283a",
+  "source": "/home/vision/work/aura/movies/hospital corridor.mp4",
+  "model": "internvl2",
+  "prompt": "You are the visual system of a hospital robot navigating a corridor.\nDescribe the scene briefly (≤20 words). Then list all obstacles with position (left/center/right), distance (near≤2m / mid 2-5m / far>5m) and urgency. Flag any moving people immediately.\nReturn JSON:\n{\"summary\":\"...\",\"obstacles\":[{\"name\":\"...\",\"position\":\"left|center|right\",\"distance\":\"near|mid|far\",\"moving\":true,\"urgency\":\"high|med|low\"}],\"risks\":[\"...\"],\"move\":{\"direction\":\"forward|hold|left|right|back\",\"reason\":\"...\"}}",
+  "yolo_enabled": true,
+  "started_at": 1774510400
+}

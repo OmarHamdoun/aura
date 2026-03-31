@@ -1,0 +1,8 @@
+{
+  "session_id": "1774550443-bb5ea075",
+  "source": "/home/vision/work/aura/movies/NHS hospital.mp4",
+  "model": "internvl2",
+  "prompt": "Hospital environment hazard scan. Look specifically for: floor hazards (spills, puddles, wet floor signs, cables, loose mats), blocked pathways, narrow passages, open doors, signage. Rate each hazard severity (high/medium/low).\nReturn JSON:\n{\"summary\":\"...\",\"hazards\":[{\"type\":\"...\",\"position\":\"left|center|right\",\"severity\":\"high|medium|low\",\"notes\":\"...\"}],\"path_clear\":true,\"risks\":[],\"move\":{\"direction\":\"forward|hold|left|right|back\",\"reason\":\"...\"}}",
+  "yolo_enabled": true,
+  "started_at": 1774550443
+}
