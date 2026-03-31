@@ -38,25 +38,37 @@ _HOLD_ENTITIES = {
     # people
     "person", "patient", "staff", "nurse", "doctor", "visitor",
     "worker", "child", "elderly", "people", "human",
-    # mobility aids
+    # mobility aids — HDS model
     "wheelchair", "wheelchair user", "person in wheelchair",
+    "wheel_chair",
     "walker", "rollator", "crutch", "crutches",
     "gurney", "stretcher", "hospital bed", "bed",
+    # OR model — patient likely present
+    "patient table",
     # autonomous agents
     "drone", "robot",
 }
 
 # Entities that block but don't require hold
 _OBSTACLE_ENTITIES = {
+    # HDS model
     "iv pole", "iv stand", "infusion pole", "drip stand",
     "supply cart", "medication cart", "crash cart", "resuscitation cart",
     "equipment cart", "laundry cart", "food cart", "trolley", "cart",
     "monitor", "vital signs monitor", "ecg machine",
-    "wheelchair", "chair", "stool", "bench",
+    "wheelchair", "wheel_chair", "chair", "stool", "bench",
     "table", "desk", "box", "toolbox", "crate",
     "door", "cable", "wire",
     "wet floor sign", "cone", "barrier",
     "shelf", "rack",
+    # OR model (hospital_yolo 13-class)
+    "anesthesia machine", "c-arm", "medicine trolley",
+    "theater suction trolley", "saline stand",
+    "machine", "stand", "bin", "foot stool",
+    "utility_cart", "ventilator", "infusion_pump",
+    "syringe_pump", "operating_bed", "xray_bed",
+    "exam_table", "overbed_table", "bedside_table",
+    "panda_baby_warmer", "incubator",
 }
 
 # Risk keywords that trigger an immediate hold
@@ -65,6 +77,10 @@ _HIGH_RISK_KEYWORDS = {
     "spill", "puddle", "wet floor", "blood", "fluid",
     "fire", "smoke", "alarm",
     "collision", "crash",
+    # OR/procedure room specific
+    "active procedure", "surgery", "intubated", "ventilated",
+    "resuscitation", "code blue", "do not enter",
+    "patient attached", "anesthesia",
 }
 
 _CAUTION_KEYWORDS = {
@@ -82,6 +98,9 @@ def _name_matches(name: str, entity_set: set) -> bool:
 
 def _urgency(obs: Dict[str, Any]) -> str:
     explicit = (obs.get("urgency") or "").lower()
+    # normalise "med" (from VLM prompt shorthand) to "medium"
+    if explicit == "med":
+        explicit = "medium"
     if explicit in ("high", "medium", "low"):
         return explicit
     name = (obs.get("name") or "").lower()
@@ -96,6 +115,11 @@ def _urgency(obs: Dict[str, Any]) -> str:
     if _name_matches(name, _OBSTACLE_ENTITIES) and _is_near(dist):
         return "medium"
     return "low"
+
+
+def _is_high_urgency(obs: Dict[str, Any]) -> bool:
+    """True if obstacle is high urgency — used directly in policy decide()."""
+    return _urgency(obs) == "high"
 
 
 # ---------- JSON extraction ----------
@@ -273,7 +297,10 @@ class SimpleHeuristicPolicy:
                 counts[sector] += 1
 
             if sector == "forward":
-                if _name_matches(name, _HOLD_ENTITIES):
+                # Check explicit urgency field first (from VLM JSON)
+                if _urgency(o) == "high":
+                    hold_reasons.append(f"high urgency {name} ahead ({dist})")
+                elif _name_matches(name, _HOLD_ENTITIES):
                     if _is_near(dist):
                         hold_reasons.append(f"near {name} ahead")
                     elif _is_near_or_mid(dist) and moving:

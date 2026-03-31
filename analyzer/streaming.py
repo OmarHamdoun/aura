@@ -8,12 +8,21 @@ import cv2
 import numpy as np
 from PIL import Image
 
+# YOLO detector — optional, gracefully disabled if not available
+try:
+    from .yolo_detector import get_detector as _get_yolo_detector
+    _YOLO_AVAILABLE = True
+except Exception:
+    _YOLO_AVAILABLE = False
+    _get_yolo_detector = None
+
 
 class ThreadedAnalyzerStream:
     """
     Background capture + analysis threads.
-    - Capture thread grabs frames and updates latest_frame.
-    - Analyze thread runs the VLM periodically and pushes captions.
+    - Capture thread  : grabs frames, updates latest_frame.
+    - YOLO thread     : runs on every frame (~1.7ms), draws boxes, feeds policy.
+    - VLM  thread     : runs every N frames (slow), produces semantic captions.
     """
 
     def __init__(
@@ -30,11 +39,18 @@ class ThreadedAnalyzerStream:
         multi_frames: int = 1,
         include_thumbs: bool = False,
         caption_postprocess: Optional[Callable[[str, str], str]] = None,
+        yolo_enabled: bool = True,
+        yolo_model_path: Optional[str] = None,
+        yolo_model_path_b: Optional[str] = None,
+        yolo_conf: float = 0.35,
+        yolo_conf_b: Optional[float] = None,
+        on_yolo: Optional[Callable[[dict], None]] = None,
+        on_stop: Optional[Callable[[], None]] = None,
     ):
         self.source = source
         self.describer = describer
         self.every_n = max(1, int(every_n))
-        self.analyze_every = max(1, int(analyze_every))  # frames between analyses
+        self.analyze_every = max(1, int(analyze_every))
         self.overlay = overlay
         self.max_width = max_width
         self.on_caption = on_caption
@@ -52,6 +68,22 @@ class ThreadedAnalyzerStream:
         self.caption_postprocess = caption_postprocess
         self.last_thumbs: list = []
 
+        # YOLO config
+        self.yolo_enabled = yolo_enabled and _YOLO_AVAILABLE
+        self.yolo_model_path = yolo_model_path
+        self.yolo_model_path_b = yolo_model_path_b
+        self.yolo_conf = yolo_conf
+        self.yolo_conf_b = yolo_conf_b
+        self.on_yolo = on_yolo
+        self.on_stop = on_stop
+        self._yolo_detector = None
+        self._yolo_lock = threading.Lock()
+
+        # YOLO state — latest annotated frame + observation
+        self._yolo_frame: Optional[np.ndarray] = None
+        self._yolo_obs: Optional[dict] = None
+        self._yolo_frame_lock = threading.Lock()
+
         self.cap = None
         self.running = False
         self.frame_lock = threading.Lock()
@@ -67,13 +99,14 @@ class ThreadedAnalyzerStream:
 
         self.last_caption = ""
         self.last_analyzed_ts = 0.0
-        self.last_analyzed_fc = 0  # trigger when fc advanced by >= analyze_every
+        self.last_analyzed_fc = 0
         self.last_prompt = self.prompt
 
-        self._t_cap = None
-        self._t_ana = None
+        self._t_cap  = None
+        self._t_ana  = None
+        self._t_yolo = None
 
-    # ---------- lifecycle ----------
+    # ── lifecycle ────────────────────────────────────────────────────
     def start(self):
         if self.running:
             return
@@ -90,19 +123,26 @@ class ThreadedAnalyzerStream:
         self._t_cap.start()
         self._t_ana.start()
 
+        if self.yolo_enabled:
+            self._t_yolo = threading.Thread(target=self._yolo_loop, daemon=True)
+            self._t_yolo.start()
+
     def stop(self):
         self.running = False
-        if self._t_cap and self._t_cap.is_alive():
-            self._t_cap.join(timeout=1.0)
-        if self._t_ana and self._t_ana.is_alive():
-            self._t_ana.join(timeout=1.0)
+        for t in (self._t_cap, self._t_ana, self._t_yolo):
+            if t and t.is_alive():
+                t.join(timeout=1.0)
         if self.cap:
             self.cap.release()
         self.cap = None
+        if self.on_stop:
+            try:
+                self.on_stop()
+            except Exception as e:
+                print(f"[stream] on_stop error: {e}", flush=True)
 
-    # ---------- threads ----------
+    # ── capture thread ───────────────────────────────────────────────
     def _capture_loop(self):
-        """Continuously capture frames; keep every_n-th as the latest frame."""
         last_ts = 0.0
         while self.running:
             if self.source_fps:
@@ -115,11 +155,10 @@ class ThreadedAnalyzerStream:
                 last_ts = time.time()
             ok, frame = self.cap.read()
             if not ok:
-                # If it's a file source, loop back to start when reaching EOF.
                 if isinstance(self.source, str):
                     try:
-                        frame_count = self.cap.get(cv2.CAP_PROP_FRAME_COUNT)
-                        if frame_count and frame_count > 0:
+                        fc = self.cap.get(cv2.CAP_PROP_FRAME_COUNT)
+                        if fc and fc > 0:
                             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                             time.sleep(0.01)
                             continue
@@ -136,29 +175,73 @@ class ThreadedAnalyzerStream:
 
             with self.frame_lock:
                 self.frame_count += 1
-                # Keep only every_n-th frame for analysis/streaming
                 if self.frame_count % self.every_n == 0:
                     frame_ts = time.time()
                     self.latest_frame = frame.copy()
                     self.latest_frame_id = self.frame_count
                     self.latest_frame_ts = frame_ts
-                    self.frame_buffer.append(
-                        {
-                            "frame": self.latest_frame,
-                            "frame_id": self.latest_frame_id,
-                            "frame_ts": frame_ts,
-                        }
-                    )
+                    self.frame_buffer.append({
+                        "frame":    self.latest_frame,
+                        "frame_id": self.latest_frame_id,
+                        "frame_ts": frame_ts,
+                    })
 
-    def _analyze_loop(self):
-        """
-        Analyze when we have advanced by >= analyze_every frames since the last analysis.
-        Also, never push an empty caption to the UI.
-        """
+    # ── YOLO thread ──────────────────────────────────────────────────
+    def _yolo_loop(self):
+        """Runs YOLO on every available frame. ~1.7ms per frame on GPU."""
+        if not _YOLO_AVAILABLE or _get_yolo_detector is None:
+            return
+
+        detector = _get_yolo_detector(
+            model_path=self.yolo_model_path,
+            model_path_b=getattr(self, "yolo_model_path_b", None),
+            conf=self.yolo_conf,
+            conf_b=self.yolo_conf_b,
+        )
+
+        last_frame_id = -1
         while self.running:
             with self.frame_lock:
                 frame = None if self.latest_frame is None else self.latest_frame.copy()
-                fc = self.frame_count
+                fid   = self.latest_frame_id
+                fts   = self.latest_frame_ts
+
+            if frame is None or fid == last_frame_id:
+                time.sleep(0.005)
+                continue
+
+            last_frame_id = fid
+
+            try:
+                result = detector.detect(frame)
+                annotated = result["annotated"]
+                obs       = result["obs"]
+
+                with self._yolo_frame_lock:
+                    self._yolo_frame = annotated
+                    self._yolo_obs   = obs
+
+                if self.on_yolo:
+                    self.on_yolo({
+                        "obs": obs,
+                        "detections": result.get("detections") or [],
+                        "frame_id": fid,
+                        "frame_ts": fts,
+                        "frame_shape": list(frame.shape[:2]),
+                        "frame_bgr": frame,
+                        "annotated_bgr": annotated,
+                    })
+
+            except Exception as e:
+                print(f"[yolo] detect error: {e}", flush=True)
+                time.sleep(0.01)
+
+    # ── VLM analyze thread ───────────────────────────────────────────
+    def _analyze_loop(self):
+        while self.running:
+            with self.frame_lock:
+                frame    = None if self.latest_frame is None else self.latest_frame.copy()
+                fc       = self.frame_count
                 frame_id = self.latest_frame_id
                 frame_ts = self.latest_frame_ts
 
@@ -166,31 +249,28 @@ class ThreadedAnalyzerStream:
                 time.sleep(0.02)
                 continue
 
-            # Trigger when enough frames have passed since the last analysis
-            if (fc - self.last_analyzed_fc) >= self.analyze_every and (time.time() - self.last_analyzed_ts) > 0.05:
+            if (fc - self.last_analyzed_fc) >= self.analyze_every and \
+               (time.time() - self.last_analyzed_ts) > 0.05:
+
                 use_multi = (
                     self.multi_frames > 1
                     and len(self.frame_buffer) >= self.multi_frames
                     and getattr(self.describer, "supports_multi_image", False)
                 )
                 if use_multi:
-                    frames = []
                     with self.frame_lock:
-                        buf_items = list(self.frame_buffer)[-self.multi_frames :]
-                    for item in buf_items:
-                        f = item["frame"]
-                        rgb = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
-                        frames.append(Image.fromarray(rgb))
-                    pil = frames
+                        buf_items = list(self.frame_buffer)[-self.multi_frames:]
+                    pil = [Image.fromarray(cv2.cvtColor(item["frame"], cv2.COLOR_BGR2RGB))
+                           for item in buf_items]
                     if self.include_thumbs:
                         self.last_thumbs = [
                             _encode_thumb_jpeg(item["frame"], width=180) for item in buf_items
                         ]
                     caption_meta = {
-                        "frame_id": buf_items[-1]["frame_id"],
-                        "frame_ts": buf_items[-1]["frame_ts"],
-                        "frame_ids": [item["frame_id"] for item in buf_items],
-                        "frame_tss": [item["frame_ts"] for item in buf_items],
+                        "frame_id":  buf_items[-1]["frame_id"],
+                        "frame_ts":  buf_items[-1]["frame_ts"],
+                        "frame_ids": [i["frame_id"] for i in buf_items],
+                        "frame_tss": [i["frame_ts"] for i in buf_items],
                     }
                 else:
                     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -198,11 +278,12 @@ class ThreadedAnalyzerStream:
                     if self.include_thumbs:
                         self.last_thumbs = [_encode_thumb_jpeg(frame, width=220)]
                     caption_meta = {
-                        "frame_id": frame_id,
-                        "frame_ts": frame_ts,
+                        "frame_id":  frame_id,
+                        "frame_ts":  frame_ts,
                         "frame_ids": [frame_id] if frame_id else [],
                         "frame_tss": [frame_ts] if frame_ts else [],
                     }
+
                 prompt = self._next_prompt()
                 try:
                     caption = self.describer.describe(
@@ -216,23 +297,22 @@ class ThreadedAnalyzerStream:
                             if processed:
                                 final_caption = processed
                         except Exception:
-                            # Keep the original caption if post-processing fails.
                             pass
                     self.last_caption = final_caption
-                    self.last_prompt = prompt
+                    self.last_prompt  = prompt
                     if self.sync_overlay:
                         with self.frame_lock:
-                            self.last_caption_frame = frame.copy()
+                            self.last_caption_frame    = frame.copy()
                             self.last_caption_frame_id = caption_meta.get("frame_id") or frame_id
                             self.last_caption_frame_ts = caption_meta.get("frame_ts") or frame_ts
                     if self.on_caption:
                         self.on_caption(final_caption, prompt, self.last_thumbs, caption_meta)
                 except Exception as e:
                     self.last_caption = f"(analyze error: {e})"
-                    self.last_prompt = prompt
+                    self.last_prompt  = prompt
                     if self.sync_overlay:
                         with self.frame_lock:
-                            self.last_caption_frame = frame.copy()
+                            self.last_caption_frame    = frame.copy()
                             self.last_caption_frame_id = caption_meta.get("frame_id") or frame_id
                             self.last_caption_frame_ts = caption_meta.get("frame_ts") or frame_ts
                     if self.on_caption:
@@ -243,63 +323,80 @@ class ThreadedAnalyzerStream:
             else:
                 time.sleep(0.01)
 
-    # ---------- read current frame (with overlay) ----------
+    # ── read frame for MJPEG ─────────────────────────────────────────
     def read(self):
-        with self.frame_lock:
-            if self.latest_frame is None and self.last_caption_frame is None:
-                return None
-            if self.sync_overlay and self.last_caption_frame is not None:
-                frame = self.last_caption_frame.copy()
+        """
+        Returns the best available frame:
+        - If YOLO is running: YOLO-annotated frame (boxes drawn) + VLM text overlay
+        - Otherwise: plain frame + VLM text overlay
+        """
+        # Prefer YOLO-annotated frame
+        if self.yolo_enabled:
+            with self._yolo_frame_lock:
+                yolo_frame = None if self._yolo_frame is None else self._yolo_frame.copy()
+            if yolo_frame is not None:
+                frame = yolo_frame
             else:
-                frame = self.latest_frame.copy()
+                # YOLO not ready yet — fall back to plain frame
+                with self.frame_lock:
+                    if self.latest_frame is None:
+                        return None
+                    frame = self.latest_frame.copy()
+        else:
+            with self.frame_lock:
+                if self.latest_frame is None and self.last_caption_frame is None:
+                    return None
+                if self.sync_overlay and self.last_caption_frame is not None:
+                    frame = self.last_caption_frame.copy()
+                else:
+                    frame = self.latest_frame.copy()
 
+        # VLM caption text overlay (summary only, max 3 lines)
         if self.overlay and self.last_caption:
             overlay_text = _extract_overlay_text(self.last_caption)
-            max_chars = _max_chars_for_width(frame.shape[1])
+            max_chars  = _max_chars_for_width(frame.shape[1])
             font_scale = _font_scale_for_width(frame.shape[1])
-            line_h = max(16, int(32 * font_scale))
-            # Cap at 3 lines so overlay never covers the scene
-            max_lines = min(3, max(1, int((frame.shape[0] - 32) / line_h)))
-            lines = _wrap_text(overlay_text, width=max_chars)
-            lines = _clamp_lines(lines, max_lines=max_lines)
-            # Draw a semi-transparent background bar behind the text
-            bar_h = len(lines) * line_h + 16
-            overlay_bar = frame.copy()
-            cv2.rectangle(overlay_bar, (0, 0), (frame.shape[1], bar_h), (0, 0, 0), -1)
-            cv2.addWeighted(overlay_bar, 0.45, frame, 0.55, 0, frame)
+            line_h     = max(16, int(32 * font_scale))
+            max_lines  = min(3, max(1, int((frame.shape[0] - 32) / line_h)))
+            lines      = _wrap_text(overlay_text, width=max_chars)
+            lines      = _clamp_lines(lines, max_lines=max_lines)
+            bar_h      = len(lines) * line_h + 16
+            bar        = frame.copy()
+            cv2.rectangle(bar, (0, 0), (frame.shape[1], bar_h), (0, 0, 0), -1)
+            cv2.addWeighted(bar, 0.45, frame, 0.55, 0, frame)
             for i, line in enumerate(lines):
                 y = 24 + i * line_h
-                cv2.putText(frame, line, (12, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), 3, cv2.LINE_AA)
-                cv2.putText(frame, line, (12, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
+                cv2.putText(frame, line, (12, y), cv2.FONT_HERSHEY_SIMPLEX,
+                            font_scale, (0, 0, 0), 3, cv2.LINE_AA)
+                cv2.putText(frame, line, (12, y), cv2.FONT_HERSHEY_SIMPLEX,
+                            font_scale, (255, 255, 255), 1, cv2.LINE_AA)
         return frame
+
+    def get_yolo_obs(self) -> Optional[dict]:
+        """Return latest YOLO observation dict (for policy use)."""
+        with self._yolo_frame_lock:
+            return self._yolo_obs
 
     def _next_prompt(self):
         with self._prompt_lock:
             if not self._prompts:
                 return "Give a short caption."
-            prompt = self._prompts[self._prompt_idx % len(self._prompts)]
+            p = self._prompts[self._prompt_idx % len(self._prompts)]
             self._prompt_idx += 1
-            return prompt
+            return p
 
 
-# ---------- helpers ----------
+# ── helpers ──────────────────────────────────────────────────────────
 
 def _extract_overlay_text(caption: str) -> str:
-    """
-    For the video overlay, show only the summary field if the caption is JSON,
-    otherwise show the first sentence of free text.
-    Keeps the overlay short and readable — full JSON stays in the caption log.
-    """
     import json as _json, re as _re
     text = (caption or "").strip()
-    # Try to extract summary from JSON
     try:
         obj = _json.loads(text)
         if isinstance(obj, dict) and obj.get("summary"):
             return str(obj["summary"]).strip()
     except Exception:
         pass
-    # Try to find JSON anywhere in the text
     m = _re.search(r'\{.*\}', text, flags=_re.DOTALL)
     if m:
         try:
@@ -308,7 +405,6 @@ def _extract_overlay_text(caption: str) -> str:
                 return str(obj["summary"]).strip()
         except Exception:
             pass
-    # Free text: return first sentence only (up to 120 chars)
     first = _re.split(r'[.\n]', text)[0].strip()
     return first[:120] if first else text[:120]
 
@@ -338,8 +434,8 @@ def _encode_thumb_jpeg(frame_bgr, width=200):
     scale = width / float(w)
     new_h = max(1, int(h * scale))
     thumb = cv2.resize(frame_bgr, (width, new_h))
-    data = encode_jpeg(thumb, quality=70)
-    b64 = base64.b64encode(data).decode("ascii")
+    data  = encode_jpeg(thumb, quality=70)
+    b64   = base64.b64encode(data).decode("ascii")
     return f"data:image/jpeg;base64,{b64}"
 
 def _clamp_lines(lines, max_lines: int):
@@ -350,9 +446,9 @@ def _clamp_lines(lines, max_lines: int):
     kept[-1] = (last[:-1] + "…") if last else "…"
     return kept
 
-
 def encode_jpeg(frame_bgr, quality=80):
-    ok, buf = cv2.imencode(".jpg", frame_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)])
+    ok, buf = cv2.imencode(".jpg", frame_bgr,
+                           [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)])
     if not ok:
         raise RuntimeError("JPEG encode failed")
     return buf.tobytes()
@@ -360,7 +456,7 @@ def encode_jpeg(frame_bgr, quality=80):
 
 def mjpeg_generator(stream, fps_limit=20):
     boundary = b"--frame"
-    period = 1.0 / max(1, fps_limit)
+    period   = 1.0 / max(1, fps_limit)
     try:
         stream.start()
         last = 0.0

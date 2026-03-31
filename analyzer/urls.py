@@ -3,6 +3,9 @@ from . import views
 
 urlpatterns = [
     path("", views.index, name="index"),
+    path("yolo-editor/", views.yolo_editor, name="yolo_editor"),
+    path("yolo_editor.html", views.yolo_editor, name="yolo_editor_html"),
+    path("yolo-editor/save/", views.yolo_editor_save, name="yolo_editor_save"),
 
     path("stream/camera/", views.stream_camera, name="stream_camera"),
     path("hospital/", views.hospital_eval, name="hospital_eval"),

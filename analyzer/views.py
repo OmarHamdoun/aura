@@ -6,6 +6,7 @@ import tempfile
 import subprocess
 import base64
 import binascii
+import uuid
 from urllib.parse import urlencode
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
@@ -14,6 +15,7 @@ from django.shortcuts import render
 from django.conf import settings
 from pathlib import Path
 from django.views.decorators.csrf import csrf_exempt
+import cv2
 
 from .inference import FastVLMDescriber, QwenVLDescriber, MiniInternVL2DriveLMDescriber
 from .streaming import ThreadedAnalyzerStream, mjpeg_generator
@@ -84,10 +86,7 @@ _MLFLOW_LOCK = threading.Lock()
 _MLFLOW_READY = False
 _MLFLOW_SEQ = 0
 _ALLOWED_DIRECTIONS = {"forward", "back", "left", "right", "hold"}
-def hospital_eval(request):
-    return render(request, "analyzer/hospital_eval.html")
 
-    
 def get_describer(model_key: str):
     key = (model_key or "internvl2").lower()
     if key not in ("fastvlm", "qwen", "internvl2"):
@@ -246,6 +245,266 @@ def _persist_caption(stream_type: str, source: str, model_key: str, txt: str, pr
         except Exception as e:
             print(f"[captions] persist failed: {e}", flush=True)
     _persist_caption_mlflow(stream_type, source, model_key, txt, prm, thumbs, meta=meta)
+
+
+def _safe_token(value: str) -> str:
+    value = (value or "").strip()
+    cleaned = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in value)
+    cleaned = cleaned.strip("._")
+    return (cleaned[:120] or "unknown")
+
+
+class _HospitalEvalSession:
+    def __init__(self, source: str, model_key: str, prompt: str, yolo_enabled: bool):
+        self.source = source
+        self.model_key = model_key
+        self.prompt = prompt
+        self.yolo_enabled = bool(yolo_enabled)
+        self.started_at = int(time.time())
+        self.session_id = f"{self.started_at}-{uuid.uuid4().hex[:8]}"
+        self.root_dir = Path(getattr(settings, "HOSPITAL_EVAL_SAVE_DIR", Path(settings.BASE_DIR) / "media" / "hospital_eval")) / (
+            f"{_safe_token(Path(source).stem)}__{self.session_id}"
+        )
+        self.frames_dir = self.root_dir / "frames"
+        self.labels_dir = self.root_dir / "labels"
+        self.meta_dir = self.root_dir / "meta"
+        self._lock = threading.Lock()
+        self._class_to_id = {}
+        self._run_id = None
+        self._mlflow_client = None
+        self._caption_count = 0
+        self._yolo_frame_count = 0
+        self._last_frame_id = 0
+
+        self.frames_dir.mkdir(parents=True, exist_ok=True)
+        self.labels_dir.mkdir(parents=True, exist_ok=True)
+        self.meta_dir.mkdir(parents=True, exist_ok=True)
+        self._write_json("session.json", {
+            "session_id": self.session_id,
+            "source": source,
+            "model": model_key,
+            "prompt": prompt,
+            "yolo_enabled": self.yolo_enabled,
+            "started_at": self.started_at,
+        })
+        self._start_mlflow_run()
+
+    def _write_json(self, name: str, payload):
+        path = self.meta_dir / name
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return path
+
+    def _append_jsonl(self, name: str, row):
+        path = self.meta_dir / name
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        return path
+
+    def _start_mlflow_run(self):
+        if not getattr(settings, "MLFLOW_SAVE_ENABLED", False):
+            return
+        if not _init_mlflow():
+            return
+        try:
+            run_name = f"hospital-eval-{_safe_token(Path(self.source).stem)}-{self.session_id}"
+            run = mlflow.start_run(run_name=run_name)
+            self._run_id = run.info.run_id
+            self._mlflow_client = mlflow.tracking.MlflowClient()
+            mlflow.set_tags(
+                {
+                    "eval_type": "hospital_video",
+                    "stream_type": "video",
+                    "source_path": self.source,
+                }
+            )
+            mlflow.log_params(
+                {
+                    "source": self.source,
+                    "model": self.model_key,
+                    "prompt": self.prompt[:500],
+                    "yolo_enabled": str(self.yolo_enabled).lower(),
+                    "session_id": self.session_id,
+                }
+            )
+            mlflow.end_run()
+        except Exception as e:
+            print(f"[mlflow] hospital eval start failed: {e}", flush=True)
+            self._run_id = None
+            self._mlflow_client = None
+
+    def _ensure_class_id(self, name: str) -> int:
+        cls_name = str(name or "unknown")
+        if cls_name not in self._class_to_id:
+            self._class_to_id[cls_name] = len(self._class_to_id)
+            self._write_json("classes.json", {
+                "class_to_id": self._class_to_id,
+                "id_to_class": {str(v): k for k, v in self._class_to_id.items()},
+            })
+        return self._class_to_id[cls_name]
+
+    def _detections_to_yolo_lines(self, detections, width: int, height: int):
+        lines = []
+        rows = []
+        for det in detections or []:
+            box = det.get("box") or []
+            if len(box) != 4 or width <= 0 or height <= 0:
+                continue
+            x1, y1, x2, y2 = [float(v) for v in box]
+            x1 = max(0.0, min(x1, width))
+            x2 = max(0.0, min(x2, width))
+            y1 = max(0.0, min(y1, height))
+            y2 = max(0.0, min(y2, height))
+            bw = max(0.0, x2 - x1)
+            bh = max(0.0, y2 - y1)
+            if bw <= 0 or bh <= 0:
+                continue
+            cls_name = str(det.get("class") or "unknown")
+            cls_id = self._ensure_class_id(cls_name)
+            xc = ((x1 + x2) / 2.0) / float(width)
+            yc = ((y1 + y2) / 2.0) / float(height)
+            wn = bw / float(width)
+            hn = bh / float(height)
+            conf = float(det.get("conf") or 0.0)
+            lines.append(f"{cls_id} {xc:.6f} {yc:.6f} {wn:.6f} {hn:.6f} {conf:.6f}")
+            rows.append({
+                "class_id": cls_id,
+                "class_name": cls_name,
+                "confidence": conf,
+                "xyxy": [x1, y1, x2, y2],
+                "xywhn": [xc, yc, wn, hn],
+                "model": det.get("model"),
+                "distance": det.get("distance"),
+                "position": det.get("position"),
+            })
+        return lines, rows
+
+    def log_caption(self, txt: str, prompt: str, thumbs, meta=None):
+        meta = meta or {}
+        row = {
+            "ts": int(time.time()),
+            "type": "caption",
+            "frame_id": meta.get("frame_id"),
+            "frame_ts": meta.get("frame_ts"),
+            "frame_ids": meta.get("frame_ids") or [],
+            "frame_tss": meta.get("frame_tss") or [],
+            "prompt": prompt,
+            "text": txt,
+            "thumb_count": len(thumbs or []),
+        }
+        with self._lock:
+            self._caption_count += 1
+            path = self._append_jsonl("captions.jsonl", row)
+            run_id = self._run_id
+            client = self._mlflow_client
+            caption_count = self._caption_count
+        if run_id and client:
+            try:
+                ts_ms = int(time.time() * 1000)
+                client.log_metric(run_id, "caption_events", caption_count, timestamp=ts_ms, step=caption_count)
+                client.log_artifact(run_id, str(path), artifact_path="meta")
+            except Exception as e:
+                print(f"[mlflow] hospital caption log failed: {e}", flush=True)
+
+    def log_yolo_frame(self, payload: dict):
+        if not isinstance(payload, dict):
+            return
+        obs = payload.get("obs") or {}
+        detections = payload.get("detections") or []
+        frame_id = int(payload.get("frame_id") or 0)
+        frame_ts = payload.get("frame_ts")
+        frame_shape = payload.get("frame_shape") or []
+        frame_bgr = payload.get("frame_bgr")
+        if len(frame_shape) != 2:
+            if frame_bgr is None:
+                return
+            frame_shape = list(frame_bgr.shape[:2])
+        height, width = int(frame_shape[0]), int(frame_shape[1])
+
+        label_lines, det_rows = self._detections_to_yolo_lines(detections, width, height)
+        with self._lock:
+            self._yolo_frame_count += 1
+            self._last_frame_id = max(self._last_frame_id, frame_id)
+
+        frame_path = None
+        if getattr(settings, "HOSPITAL_EVAL_SAVE_YOLO", True):
+            label_path = self.labels_dir / f"{frame_id:06d}.txt"
+            label_path.write_text("\n".join(label_lines) + ("\n" if label_lines else ""), encoding="utf-8")
+            if frame_bgr is not None:
+                frame_path = self.frames_dir / f"{frame_id:06d}.jpg"
+                try:
+                    ok, data = cv2.imencode(".jpg", frame_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+                    if ok:
+                        frame_path.write_bytes(data.tobytes())
+                except Exception as e:
+                    print(f"[hospital-eval] frame save failed: {e}", flush=True)
+        else:
+            label_path = None
+            frame_path = None
+
+        row = {
+            "ts": int(time.time()),
+            "type": "yolo_frame",
+            "frame_id": frame_id,
+            "frame_ts": frame_ts,
+            "frame_size": {"width": width, "height": height},
+            "obs": obs,
+            "detections": det_rows,
+            "label_path": str(label_path) if label_path else "",
+            "frame_path": str(frame_path) if frame_path else "",
+        }
+        self._append_jsonl("yolo_frames.jsonl", row)
+
+        if self._run_id and self._mlflow_client:
+            try:
+                step = max(frame_id, self._yolo_frame_count)
+                ts_ms = int(time.time() * 1000)
+                self._mlflow_client.log_metric(self._run_id, "yolo_frames", self._yolo_frame_count, timestamp=ts_ms, step=step)
+                self._mlflow_client.log_metric(self._run_id, "yolo_detections", len(det_rows), timestamp=ts_ms, step=step)
+                self._mlflow_client.log_metric(self._run_id, "yolo_risks", len((obs or {}).get("risks") or []), timestamp=ts_ms, step=step)
+                self._mlflow_client.log_artifact(self._run_id, str(self.meta_dir / "yolo_frames.jsonl"), artifact_path="meta")
+                classes_path = self.meta_dir / "classes.json"
+                if classes_path.exists():
+                    self._mlflow_client.log_artifact(self._run_id, str(classes_path), artifact_path="meta")
+                if label_path and label_path.exists():
+                    self._mlflow_client.log_artifact(self._run_id, str(label_path), artifact_path="yolo_labels")
+                if frame_path and frame_path.exists():
+                    self._mlflow_client.log_artifact(self._run_id, str(frame_path), artifact_path="frames")
+            except Exception as e:
+                print(f"[mlflow] hospital yolo log failed: {e}", flush=True)
+
+    def finish(self):
+        summary = {
+            "session_id": self.session_id,
+            "source": self.source,
+            "model": self.model_key,
+            "prompt": self.prompt,
+            "caption_count": self._caption_count,
+            "yolo_frame_count": self._yolo_frame_count,
+            "last_frame_id": self._last_frame_id,
+            "class_count": len(self._class_to_id),
+            "classes": self._class_to_id,
+            "root_dir": str(self.root_dir),
+            "finished_at": int(time.time()),
+        }
+        summary_path = self._write_json("summary.json", summary)
+        if self._run_id and self._mlflow_client:
+            try:
+                ts_ms = int(time.time() * 1000)
+                self._mlflow_client.log_metric(self._run_id, "caption_count_final", self._caption_count, timestamp=ts_ms, step=self._caption_count)
+                self._mlflow_client.log_metric(self._run_id, "yolo_frame_count_final", self._yolo_frame_count, timestamp=ts_ms, step=self._yolo_frame_count)
+                self._mlflow_client.log_metric(self._run_id, "class_count_final", len(self._class_to_id), timestamp=ts_ms, step=max(self._yolo_frame_count, 1))
+                self._mlflow_client.log_artifact(self._run_id, str(summary_path), artifact_path="meta")
+                captions_path = self.meta_dir / "captions.jsonl"
+                yolo_frames_path = self.meta_dir / "yolo_frames.jsonl"
+                if captions_path.exists():
+                    self._mlflow_client.log_artifact(self._run_id, str(captions_path), artifact_path="meta")
+                if yolo_frames_path.exists():
+                    self._mlflow_client.log_artifact(self._run_id, str(yolo_frames_path), artifact_path="meta")
+                classes_path = self.meta_dir / "classes.json"
+                if classes_path.exists():
+                    self._mlflow_client.log_artifact(self._run_id, str(classes_path), artifact_path="meta")
+            except Exception as e:
+                print(f"[mlflow] hospital eval finish failed: {e}", flush=True)
 
 
 # -------------------------------------------------
@@ -594,6 +853,74 @@ def _resolve_video_path(path: str) -> str:
 def index(request):
     return render(request, "analyzer/index.html")
 
+def hospital_eval(request):
+    return render(request, "analyzer/hospital_eval.html")
+
+
+def yolo_editor(request):
+    return render(request, "analyzer/yolo_editor.html")
+
+
+@csrf_exempt
+def yolo_editor_save(request):
+    if request.method != "POST":
+        return HttpResponseBadRequest("POST required")
+
+    image = request.FILES.get("image")
+    labels_text    = (request.POST.get("labels_text")    or "").strip()
+    classes_text   = (request.POST.get("classes_text")   or "").strip()
+    classes_b_text = (request.POST.get("classes_b_text") or "").strip()
+    image_name     = (request.POST.get("image_name")     or "").strip()
+    meta_json = (request.POST.get("meta_json") or "").strip()
+
+    if not image and not image_name:
+        return HttpResponseBadRequest("Missing image or image_name")
+
+    image_basename = Path(image_name or getattr(image, "name", "image")).name
+    stem = _safe_token(Path(image_basename).stem)
+    out_root = Path(settings.MEDIA_ROOT) / "yolo_editor" / f"{stem}__{int(time.time())}"
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    image_path = None
+    if image:
+        suffix = Path(getattr(image, "name", "")).suffix or ".jpg"
+        image_path = out_root / f"{stem}{suffix}"
+        with image_path.open("wb") as f:
+            for chunk in image.chunks():
+                f.write(chunk)
+
+    labels_path = out_root / f"{stem}.txt"
+    labels_path.write_text(labels_text + ("\n" if labels_text else ""), encoding="utf-8")
+
+    classes_path = None
+    if classes_text:
+        classes_path = out_root / "classes_a.txt"
+        classes_path.write_text(classes_text + "\n", encoding="utf-8")
+    if classes_b_text:
+        (out_root / "classes_b.txt").write_text(classes_b_text + "\n", encoding="utf-8")
+
+    meta_path = None
+    if meta_json:
+        meta_dir = out_root / "meta"
+        meta_dir.mkdir(parents=True, exist_ok=True)
+        meta_path = meta_dir / f"{stem}.json"
+        try:
+            parsed = json.loads(meta_json)
+            meta_path.write_text(json.dumps(parsed, ensure_ascii=False, indent=2), encoding="utf-8")
+        except json.JSONDecodeError:
+            meta_path.write_text(meta_json, encoding="utf-8")
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "saved_dir": str(out_root),
+            "image_path": str(image_path) if image_path else "",
+            "labels_path": str(labels_path),
+            "classes_path": str(classes_path) if classes_path else "",
+            "meta_path": str(meta_path) if meta_path else "",
+        }
+    )
+
 
 # -------------------------------------------------
 # OpenTTS proxy endpoints
@@ -755,12 +1082,26 @@ def stream_camera(request):
     # Optional: force strict JSON for camera if requested
     enforce_json = request.GET.get("enforce_json", "0").lower() in ("1", "true", "yes", "on")
     if request.GET.get("pipeline", "").strip().lower() == "two_stage":
-        prompt = SCENE_STATE_JSON_PROMPT
+        if prompt and prompt != "Give a short caption.":
+            prompt = f"{prompt}\n\n{SCENE_STATE_JSON_PROMPT}"
+        else:
+            prompt = SCENE_STATE_JSON_PROMPT
         enforce_json = False
     if enforce_json:
-        prompt = FISHEYE_JSON_PROMPT
+        if prompt and prompt != "Give a short caption.":
+            prompt = f"{prompt}\n\n{FISHEYE_JSON_PROMPT}"
+        else:
+            prompt = FISHEYE_JSON_PROMPT
 
     prompt = _maybe_multi_prompt(prompt)
+
+    yolo_model_path   = getattr(settings, "YOLO_MODEL_PATH",
+        "/home/vision/work/aura/models/hospital_hds/weights/best.pt")
+    yolo_model_path_b = getattr(settings, "YOLO_MODEL_PATH_B",
+        "/home/vision/work/aura/models/hospital_yolo/weights/best.pt")
+    yolo_conf   = float(getattr(settings, "YOLO_CONF", 0.35))
+    yolo_conf_b = float(getattr(settings, "YOLO_CONF_B", 0.40))
+
     stream = ThreadedAnalyzerStream(
         source=0,
         describer=get_describer(model_key),
@@ -787,6 +1128,10 @@ def stream_camera(request):
         max_new_tokens=max_new,
         multi_frames=multi_frames,
         include_thumbs=True,
+        yolo_model_path=yolo_model_path,
+        yolo_model_path_b=yolo_model_path_b,
+        yolo_conf=yolo_conf,
+        yolo_conf_b=yolo_conf_b,
     )
     return StreamingHttpResponse(
         mjpeg_generator(stream, fps_limit=20),
@@ -802,25 +1147,65 @@ def stream_video(request):
     if not os.path.exists(path):
         return HttpResponseBadRequest(f"Video not found: {path}")
 
-    model_key = request.GET.get("model", "fastvlm")
-    prompt = _get_str(request, "prompt", "Give a short caption.")
+    model_key    = request.GET.get("model", "fastvlm")
+    prompt       = _get_str(request, "prompt", "Give a short caption.")
     analyze_every = _get_int(request, "analyze_every", 30, 1, 600)
-    every_n = _get_int(request, "every_n", 2, 1, 10)
-    max_width = _get_int(request, "max_width", 1920, 320, 3840)
-    max_new   = _get_int(request, "max_new_tokens", 96, 8, 256)
-    fps_limit = _get_int(request, "fps", 5, 1, 30)
+    every_n      = _get_int(request, "every_n", 2, 1, 10)
+    max_width    = _get_int(request, "max_width", 1920, 320, 3840)
+    max_new      = _get_int(request, "max_new_tokens", 96, 8, 256)
+    fps_limit    = _get_int(request, "fps", 5, 1, 30)
     multi_frames = _get_int(request, "multi_frames", 1, 1, 8)
+    yolo_enabled = _parse_bool(request.GET.get("yolo", "1"), default=True)
+    yolo_conf    = float(request.GET.get("yolo_conf", "0.35"))
 
     # Force strict JSON for video if requested
     enforce_json = request.GET.get("enforce_json", "0").lower() in ("1", "true", "yes", "on")
     if request.GET.get("pipeline", "").strip().lower() == "two_stage":
-        prompt = SCENE_STATE_JSON_PROMPT
+        if prompt and prompt != "Give a short caption.":
+            prompt = f"{prompt}\n\n{SCENE_STATE_JSON_PROMPT}"
+        else:
+            prompt = SCENE_STATE_JSON_PROMPT
         enforce_json = False
     if enforce_json:
-        prompt = FISHEYE_JSON_PROMPT
+        if prompt and prompt != "Give a short caption.":
+            prompt = f"{prompt}\n\n{FISHEYE_JSON_PROMPT}"
+        else:
+            prompt = FISHEYE_JSON_PROMPT
 
     buf = get_video_buffer(path)
     prompt = _maybe_multi_prompt(prompt)
+    eval_session = _HospitalEvalSession(
+        source=path,
+        model_key=model_key,
+        prompt=prompt if isinstance(prompt, str) else "\n---\n".join(prompt),
+        yolo_enabled=yolo_enabled,
+    )
+
+    yolo_model_path   = getattr(settings, "YOLO_MODEL_PATH",
+        "/home/vision/work/aura/models/hospital_hds/weights/best.pt")
+    yolo_model_path_b = getattr(settings, "YOLO_MODEL_PATH_B",
+        "/home/vision/work/aura/models/hospital_yolo/weights/best.pt")
+
+    def _on_yolo(payload):
+        """Called on every frame with YOLO detections and frame metadata."""
+        if not payload:
+            return
+        obs = payload.get("obs") or {}
+        text = json.dumps(obs, ensure_ascii=False)
+        frame_id = payload.get("frame_id")
+        frame_ts = payload.get("frame_ts")
+        buf.add(
+            text,
+            source=f"{path}:yolo",
+            prompt="yolo",
+            thumbs=[],
+            frame_id=frame_id,
+            frame_ts=frame_ts,
+            frame_ids=[frame_id] if frame_id is not None else [],
+            frame_tss=[frame_ts] if frame_ts is not None else [],
+        )
+        eval_session.log_yolo_frame(payload)
+
     stream = ThreadedAnalyzerStream(
         source=path,
         describer=get_describer(model_key),
@@ -840,6 +1225,7 @@ def stream_video(request):
                 frame_tss=meta.get("frame_tss"),
             ),
             _persist_caption("video", path, model_key, txt, prm, thumbs, meta=meta),
+            eval_session.log_caption(txt, prm, thumbs, meta=meta),
             speak_c3po(txt),
         ),
         caption_postprocess=_postprocess_caption,
@@ -847,6 +1233,13 @@ def stream_video(request):
         max_new_tokens=max_new,
         multi_frames=multi_frames,
         include_thumbs=True,
+        yolo_enabled=yolo_enabled,
+        yolo_model_path=yolo_model_path,
+        yolo_model_path_b=yolo_model_path_b,
+        yolo_conf=yolo_conf,
+        yolo_conf_b=float(getattr(settings, "YOLO_CONF_B", 0.40)),
+        on_yolo=_on_yolo,
+        on_stop=eval_session.finish,
     )
     return StreamingHttpResponse(
         mjpeg_generator(stream, fps_limit=fps_limit),

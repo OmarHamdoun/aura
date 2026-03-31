@@ -168,7 +168,7 @@ class MiniInternVL2DriveLMDescriber:
         use_cuda = torch.cuda.is_available() and MINI_INTERNVL2_DEVICE != "cpu"
         self.device = torch.device("cuda" if use_cuda else "cpu")
         if self.device.type == "cuda":
-            self.dtype = torch.float16
+            self.dtype = torch.bfloat16
         else:
             self.dtype = torch.float32
         self.image_size = 448
@@ -176,14 +176,22 @@ class MiniInternVL2DriveLMDescriber:
         self._mean = torch.tensor(IMAGENET_MEAN).view(3, 1, 1)
         self._std = torch.tensor(IMAGENET_STD).view(3, 1, 1)
 
-        # This model's remote code calls .item() during __init__; avoid meta-tensor init.
+        # InternVLChatModel expects torch_dtype not dtype
         model_kwargs = dict(
-            dtype=self.dtype,
+            torch_dtype=self.dtype,
             low_cpu_mem_usage=False,
             trust_remote_code=True,
         )
         if self.device.type == "cuda":
+            # Only use flash_attn if it loads cleanly against current PyTorch
+            _flash_ok = False
             if importlib.util.find_spec("flash_attn") is not None:
+                try:
+                    import flash_attn  # noqa — test import only
+                    _flash_ok = True
+                except Exception:
+                    print("[inference] flash_attn import failed — falling back to standard attention.", flush=True)
+            if _flash_ok:
                 model_kwargs["use_flash_attn"] = True
             # Avoid meta-tensor init issues with remote-code models unless user explicitly sets a map.
             if MINI_INTERNVL2_DEVICE_MAP and MINI_INTERNVL2_DEVICE_MAP not in ("auto", "balanced", "balanced_low_0"):
@@ -191,59 +199,12 @@ class MiniInternVL2DriveLMDescriber:
             else:
                 model_kwargs["low_cpu_mem_usage"] = False
 
-        @contextmanager
-        def _disable_meta_init():
-            # transformers 5 dev initializes on meta by default; this model's __init__ can't handle meta tensors.
-            orig = PreTrainedModel.get_init_context
-
-            @classmethod
-            def _no_meta_init(cls, *args, **kwargs):
-                # transformers 4.x and 5.x have different signatures; keep it minimal.
-                dtype = None
-                if args:
-                    dtype = args[0] if hasattr(args[0], "device") or args[0] is not None else None
-                if "dtype" in kwargs:
-                    dtype = kwargs["dtype"]
-                return [local_torch_dtype(dtype, cls.__name__)]
-
-            PreTrainedModel.get_init_context = _no_meta_init
-            try:
-                yield
-            finally:
-                PreTrainedModel.get_init_context = orig
-
-        @contextmanager
-        def _patch_tied_weights_marker():
-            # Some remote-code models don't define all_tied_weights_keys; guard the marker.
-            orig = getattr(PreTrainedModel, "mark_tied_weights_as_initialized", None)
-            if orig is None:
-                yield
-                return
-
-            def _safe_mark(self):
-                keys = getattr(self, "all_tied_weights_keys", None)
-                if keys is None:
-                    keys = getattr(self, "_tied_weights_keys", None)
-                if not keys:
-                    return
-                for tied_param in keys.keys():
-                    if tied_param in self._weights_initialized:
-                        continue
-                    self._weights_initialized.add(tied_param)
-
-            PreTrainedModel.mark_tied_weights_as_initialized = _safe_mark
-            try:
-                yield
-            finally:
-                PreTrainedModel.mark_tied_weights_as_initialized = orig
-
+        # transformers 4.47.1 — load directly, no meta-init patches needed
         try:
-            with _disable_meta_init(), _patch_tied_weights_marker():
-                self.model = AutoModel.from_pretrained(MINI_INTERNVL2_DRIVELM_PATH, **model_kwargs)
+            self.model = AutoModel.from_pretrained(MINI_INTERNVL2_DRIVELM_PATH, **model_kwargs)
         except TypeError:
             model_kwargs.pop("use_flash_attn", None)
-            with _disable_meta_init(), _patch_tied_weights_marker():
-                self.model = AutoModel.from_pretrained(MINI_INTERNVL2_DRIVELM_PATH, **model_kwargs)
+            self.model = AutoModel.from_pretrained(MINI_INTERNVL2_DRIVELM_PATH, **model_kwargs)
 
         self.model = self.model.eval()
         if self.device.type == "cpu":
@@ -256,6 +217,13 @@ class MiniInternVL2DriveLMDescriber:
             trust_remote_code=True,
             use_fast=False,
         )
+
+        # transformers 5.x removed clean_up_tokenization — patch if missing
+        if not hasattr(self.tokenizer, "clean_up_tokenization"):
+            self.tokenizer.clean_up_tokenization = lambda text: text
+        # also patch on the underlying slow tokenizer if present
+        if hasattr(self.tokenizer, "_tokenizer") and not hasattr(self.tokenizer._tokenizer, "clean_up_tokenization"):
+            self.tokenizer._tokenizer.clean_up_tokenization = lambda text: text
 
         if hasattr(self.model, "language_model") and not hasattr(self.model.language_model, "generate"):
             base_cls = self.model.language_model.__class__
@@ -294,6 +262,15 @@ class MiniInternVL2DriveLMDescriber:
             self.model.language_model.prepare_inputs_for_generation = types.MethodType(
                 _prepare_inputs_for_generation, self.model.language_model
             )
+
+        # Force legacy cache format globally so DynamicCache is never passed to remote code
+        try:
+            if hasattr(self.model, "generation_config") and self.model.generation_config is not None:
+                self.model.generation_config.cache_implementation = None
+            if hasattr(self.model, "language_model") and                hasattr(self.model.language_model, "generation_config") and                self.model.language_model.generation_config is not None:
+                self.model.language_model.generation_config.cache_implementation = None
+        except Exception:
+            pass
 
     def _transform(self, img: Image.Image) -> torch.Tensor:
         if img.mode != "RGB":
@@ -364,31 +341,46 @@ class MiniInternVL2DriveLMDescriber:
     @torch.inference_mode()
     def describe(self, pil_img: Image.Image, prompt: str = "Give a short caption.", max_new_tokens: int = 96):
         prompt = (prompt or "").strip() or "Give a short caption."
-        generation_config = dict(max_new_tokens=max_new_tokens)
-
-        if isinstance(pil_img, (list, tuple)):
-            images = [img.convert("RGB") for img in pil_img if img is not None]
-            if not images:
-                return "(no image provided)"
-            pixel_batches = [self._load_pixel_values(img) for img in images]
-            num_patches_list = [pv.size(0) for pv in pixel_batches]
-            pixel_values = torch.cat(pixel_batches, dim=0).to(self.device, dtype=self.dtype)
-            prefix = "\n".join([f"Image-{i+1}: <image>" for i in range(len(images))])
-            question = f"{prefix}\n{prompt}"
-            with self.lock:
-                response = self.model.chat(
-                    self.tokenizer,
-                    pixel_values,
-                    question,
-                    generation_config,
-                    num_patches_list=num_patches_list,
-                )
-        else:
-            question = f"<image>\n{prompt}"
-            pixel_values = self._load_pixel_values(pil_img.convert("RGB"))
-            pixel_values = pixel_values.to(self.device, dtype=self.dtype)
-            with self.lock:
-                response = self.model.chat(
-                    self.tokenizer, pixel_values, question, generation_config
-                )
-        return (response or "").strip() or "(no caption generated)"
+        generation_config = dict(
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+            temperature=None,
+            top_p=None,
+        )
+        try:
+            if isinstance(pil_img, (list, tuple)):
+                images = [img.convert("RGB") for img in pil_img if img is not None]
+                if not images:
+                    return "(no image provided)"
+                pixel_batches = [self._load_pixel_values(img) for img in images]
+                num_patches_list = [pv.size(0) for pv in pixel_batches]
+                pixel_values = torch.cat(pixel_batches, dim=0).to(self.device, dtype=self.dtype)
+                prefix = "\n".join([f"Image-{i+1}: <image>" for i in range(len(images))])
+                question = f"{prefix}\n{prompt}"
+                with self.lock:
+                    response = self.model.chat(
+                        self.tokenizer,
+                        pixel_values,
+                        question,
+                        generation_config,
+                        num_patches_list=num_patches_list,
+                    )
+            else:
+                question = f"<image>\n{prompt}"
+                pixel_values = self._load_pixel_values(pil_img.convert("RGB"))
+                pixel_values = pixel_values.to(self.device, dtype=self.dtype)
+                with self.lock:
+                    response = self.model.chat(
+                        self.tokenizer, pixel_values, question, generation_config
+                    )
+            return (response or "").strip() or "(no caption generated)"
+        except Exception as e:
+            err = str(e)
+            print(f"[internvl2] generation error: {err[:120]}", flush=True)
+            if "CUDA" in err or "device-side" in err:
+                try:
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                except Exception:
+                    pass
+            return f"(inference error: {err[:80]})"

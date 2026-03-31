@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Aura — Hospital Robot Video Evaluator</title>
+<title>GPAS — Hospital Robot Evaluator</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500&display=swap');
 
@@ -584,8 +584,8 @@
 <header>
   <div class="logo-mark">AU</div>
   <div>
-    <div class="header-title">Aura — Hospital Robot Evaluator</div>
-    <div class="header-sub">video evaluation mode · v0.1</div>
+    <div class="header-title">GPAS — Hospital Robot Evaluator</div>
+    <div class="header-sub">hospital robot perception · v1.0</div>
   </div>
   <div class="header-right">
     <div class="status-pill" id="status-pill">
@@ -784,6 +784,12 @@
     </div>
 
     <div class="decide-panel">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+        <button id="tts-toggle-btn" onclick="toggleTts()" style="padding:5px 12px;font-family:var(--mono);font-size:11px;background:transparent;border:1px solid var(--border2);color:var(--muted);border-radius:6px;cursor:pointer;">🔇 Voice OFF</button>
+        <button onclick="testVoice()" style="padding:5px 10px;font-family:var(--mono);font-size:11px;background:transparent;border:1px solid var(--border2);color:var(--muted);border-radius:6px;cursor:pointer;">Test</button>
+        <select id="tts-voice-select" style="flex:1;min-width:0;background:var(--bg);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--mono);font-size:10px;"></select>
+        <input id="tts-rate" type="number" min="0.5" max="2" step="0.1" value="1" title="Speed" style="width:52px;background:var(--bg);border:1px solid var(--border2);border-radius:6px;padding:5px 6px;color:var(--text);font-family:var(--mono);font-size:11px;"/>
+      </div>
       <div class="section-label" style="margin-bottom:8px;">manual decide</div>
       <div class="decide-row">
         <input class="decide-input" id="instruction-input" type="text" placeholder="Instruction (e.g. deliver meds to ward 3)"/>
@@ -995,6 +1001,7 @@ function processCaption(item) {
   allEntries.push(entry);
   updateStats();
   renderEntry(entry);
+  _maybeSpeak(entry);
   updateSummaryBar(item.text, obs);
 }
 
@@ -1120,9 +1127,81 @@ async function manualDecide() {
     resultEl.textContent = `${dir.toUpperCase()} — ${reason}`;
   } catch(e) {
     resultEl.style.color = 'var(--danger)';
-    resultEl.textContent = 'Failed to connect to Aura server.';
+    resultEl.textContent = 'Failed to connect to GPAS server.';
   }
 }
+
+
+  // ── Browser TTS (no server needed) ──────────────────────────────
+  let _ttsEnabled = false;
+  let _ttsVoices = [];
+  let _ttsLastId = 0;
+  let _ttsSpeaking = false;
+  let _ttsLastSpoke = 0;
+  const _ttsMinInterval = 4000;
+
+  function _loadVoices() {
+    _ttsVoices = window.speechSynthesis.getVoices();
+    const sel = document.getElementById('tts-voice-select');
+    if (!sel) return;
+    sel.innerHTML = '';
+    const en = _ttsVoices.filter(v => v.lang.startsWith('en'));
+    const voices = en.length ? en : _ttsVoices;
+    voices.forEach((v, i) => {
+      const opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = v.name + ' (' + v.lang + ')';
+      sel.appendChild(opt);
+    });
+  }
+  window.speechSynthesis.onvoiceschanged = _loadVoices;
+  setTimeout(_loadVoices, 300);
+
+  function _speak(text) {
+    if (!_ttsEnabled || !text || _ttsSpeaking) return;
+    const now = Date.now();
+    if (now - _ttsLastSpoke < _ttsMinInterval) return;
+    _ttsSpeaking = true;
+    _ttsLastSpoke = now;
+    window.speechSynthesis.cancel();
+    const utt = new SpeechSynthesisUtterance(text.slice(0, 200));
+    const sel = document.getElementById('tts-voice-select');
+    if (sel && _ttsVoices.length) {
+      const en = _ttsVoices.filter(v => v.lang.startsWith('en'));
+      const voices = en.length ? en : _ttsVoices;
+      const idx = parseInt(sel.value) || 0;
+      utt.voice = voices[Math.min(idx, voices.length - 1)];
+    }
+    utt.rate   = parseFloat(document.getElementById('tts-rate')?.value || '1');
+    utt.pitch  = 1.0;
+    utt.volume = 1.0;
+    utt.onend  = () => { _ttsSpeaking = false; };
+    utt.onerror = () => { _ttsSpeaking = false; };
+    window.speechSynthesis.speak(utt);
+  }
+
+  function _maybeSpeak(entry) {
+    if (!_ttsEnabled) return;
+    if (entry.id <= _ttsLastId) return;
+    _ttsLastId = entry.id;
+    if (entry.cls !== 'hazard' && entry.cls !== 'caution') return;
+    const obs = entry.obs;
+    const msg = (obs && obs.summary) ? obs.summary : (entry.text || '').slice(0, 120);
+    if (msg) _speak('Warning: ' + msg);
+  }
+
+  function toggleTts() {
+    _ttsEnabled = !_ttsEnabled;
+    const btn = document.getElementById('tts-toggle-btn');
+    if (btn) {
+      btn.textContent = _ttsEnabled ? '🔊 Voice ON' : '🔇 Voice OFF';
+      btn.style.color = _ttsEnabled ? 'var(--accent)' : 'var(--muted)';
+      btn.style.borderColor = _ttsEnabled ? 'rgba(0,200,150,0.4)' : 'var(--border2)';
+    }
+    if (_ttsEnabled) _speak('Voice alerts enabled.');
+  }
+
+  function testVoice() { _speak('Warning: obstacle detected ahead. Please hold.'); }
 
 // ── Status ──
 function setStatus(state, text) {
@@ -1206,7 +1285,7 @@ function exportLog() {
   const lines = allEntries.map(e => JSON.stringify({
     id: e.id, ts: e.ts, cls: e.cls, text: e.text, action: e.action
   }));
-  download('aura_captions.jsonl', lines.join('\n'));
+  download('gpas_captions.jsonl', lines.join('\n'));
 }
 
 function exportSummary() {
@@ -1240,7 +1319,7 @@ ${allEntries.filter(e => e.action).map(e =>
   `[${new Date(e.ts*1000).toLocaleTimeString()}] ${e.action.direction.toUpperCase()} — ${e.action.reason}`
 ).join('\n') || '(none)'}
 `;
-  download('aura_eval_report.txt', report);
+  download('gpas_eval_report.txt', report);
 }
 
 function download(filename, content) {

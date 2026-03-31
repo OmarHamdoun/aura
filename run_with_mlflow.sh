@@ -54,24 +54,35 @@ MLFLOW_HOST="${MLFLOW_HOST:-127.0.0.1}"
 OPENTTS_AUTOSTART="${OPENTTS_AUTOSTART:-true}"
 OPENTTS_PORT="${OPENTTS_PORT:-5500}"
 OPENTTS_IMAGE="${OPENTTS_IMAGE:-synesthesiam/opentts:en}"
-OPENTTS_CONTAINER_NAME="${OPENTTS_CONTAINER_NAME:-aura-opentts}"
+OPENTTS_CONTAINER_NAME="${OPENTTS_CONTAINER_NAME:-gpas-opentts}"
 
-export MLFLOW_SAVE_ENABLED="${MLFLOW_SAVE_ENABLED:-true}"
+export MLFLOW_SAVE_ENABLED="${MLFLOW_SAVE_ENABLED:-1}"
 export MLFLOW_TRACKING_URI="${MLFLOW_TRACKING_URI:-http://${MLFLOW_HOST}:${MLFLOW_PORT}}"
-export MLFLOW_EXPERIMENT_NAME="${MLFLOW_EXPERIMENT_NAME:-aura-captions}"
-export MLFLOW_RUN_NAME_PREFIX="${MLFLOW_RUN_NAME_PREFIX:-caption}"
+export MLFLOW_EXPERIMENT_NAME="${MLFLOW_EXPERIMENT_NAME:-gpas-hospital}"
+export MLFLOW_RUN_NAME_PREFIX="${MLFLOW_RUN_NAME_PREFIX:-gpas}"
 export MLFLOW_LOG_EVERY_N="${MLFLOW_LOG_EVERY_N:-1}"
-export MLFLOW_LOG_THUMB_IMAGES="${MLFLOW_LOG_THUMB_IMAGES:-true}"
+export MLFLOW_LOG_THUMB_IMAGES="${MLFLOW_LOG_THUMB_IMAGES:-1}"
 export MLFLOW_MAX_THUMB_IMAGES="${MLFLOW_MAX_THUMB_IMAGES:-1}"
 export ACTION_POLICY_PROVIDER="${ACTION_POLICY_PROVIDER:-heuristic}"
 export ACTION_OPENAI_MODEL="${ACTION_OPENAI_MODEL:-gpt-4o-mini}"
 export ACTION_OPENAI_TIMEOUT="${ACTION_OPENAI_TIMEOUT:-15}"
-export ACTION_OPENAI_GENERATE_POLICY="${ACTION_OPENAI_GENERATE_POLICY:-false}"
+export ACTION_OPENAI_GENERATE_POLICY="${ACTION_OPENAI_GENERATE_POLICY:-0}"
 export ACTION_OPENAI_POLICY_MAX_CHARS="${ACTION_OPENAI_POLICY_MAX_CHARS:-280}"
 export CAPTION_SUMMARY_PROVIDER="${CAPTION_SUMMARY_PROVIDER:-openai}"
 export CAPTION_SUMMARY_OPENAI_MODEL="${CAPTION_SUMMARY_OPENAI_MODEL:-gpt-4o-mini}"
 export CAPTION_SUMMARY_OPENAI_TIMEOUT="${CAPTION_SUMMARY_OPENAI_TIMEOUT:-12}"
 export CAPTION_SUMMARY_MAX_CHARS="${CAPTION_SUMMARY_MAX_CHARS:-180}"
+
+# OpenTTS — exported so Django settings.py can read them
+export OPENTTS_URL="${OPENTTS_URL:-http://127.0.0.1:${OPENTTS_PORT:-5500}}"
+export OPENTTS_SPEAK_ENABLED="${OPENTTS_SPEAK_ENABLED:-1}"
+export OPENTTS_TTS_URL="${OPENTTS_TTS_URL:-http://127.0.0.1:${OPENTTS_PORT:-5500}/api/tts}"
+export OPENTTS_VOICE="${OPENTTS_VOICE:-larynx:harvard}"
+export OPENTTS_LANG="${OPENTTS_LANG:-en}"
+export OPENTTS_EFFECT="${OPENTTS_EFFECT:-robot}"
+export OPENTTS_RATE="${OPENTTS_RATE:-1.0}"
+export OPENTTS_MIN_INTERVAL="${OPENTTS_MIN_INTERVAL:-3.0}"
+export OPENTTS_DEBUG="${OPENTTS_DEBUG:-0}"
 
 if [[ "${ACTION_POLICY_PROVIDER}" == "openai" || "${CAPTION_SUMMARY_PROVIDER}" == "openai" ]] && [[ -z "${OPENAI_API_KEY:-}" ]]; then
   echo "Warning: OpenAI provider enabled but OPENAI_API_KEY is not set; OpenAI paths will fall back to local behavior."
@@ -127,6 +138,23 @@ MLFLOW_PID=$!
 
 sleep 2
 echo "MLflow tracking URI: ${MLFLOW_TRACKING_URI}"
+
+# Wait for OpenTTS to be ready (up to 30s)
+if [[ "${OPENTTS_STARTED_BY_SCRIPT:-false}" == "true" ]]; then
+  echo "Waiting for OpenTTS to be ready..."
+  OPENTTS_READY=false
+  for i in $(seq 1 30); do
+    if curl -sf "http://127.0.0.1:${OPENTTS_PORT}/api/voices" >/dev/null 2>&1; then
+      echo "OpenTTS ready after ${i}s"
+      OPENTTS_READY=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "${OPENTTS_READY}" != "true" ]]; then
+    echo "Warning: OpenTTS did not become ready in 30s — voice may not work on first request."
+  fi
+fi
 echo "Action provider: ${ACTION_POLICY_PROVIDER} (model: ${ACTION_OPENAI_MODEL})"
 echo "Action policy generation: ${ACTION_OPENAI_GENERATE_POLICY}"
 echo "Caption summary provider: ${CAPTION_SUMMARY_PROVIDER} (model: ${CAPTION_SUMMARY_OPENAI_MODEL})"
