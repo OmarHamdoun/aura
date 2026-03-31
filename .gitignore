@@ -3,3 +3,9 @@
 *.jpg
 *.pt
 *.json
+*.mp4
+*.zip
+movies/
+claude/
+mlruns/
+outputs/
